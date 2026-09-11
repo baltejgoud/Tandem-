@@ -133,7 +133,9 @@ class PlaywrightSurface(Surface):
         )
 
         container_loc = context.locator(active_selector).first
-        if not container_loc.is_visible(timeout=2000):
+        try:
+            container_loc.wait_for(state="visible", timeout=5000)
+        except Exception:
             raise PageDriftError(f"Container element '{active_selector}' not visible on surface")
 
         raw_text = container_loc.inner_text() or ""

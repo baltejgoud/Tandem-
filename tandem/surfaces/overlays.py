@@ -20,6 +20,7 @@ OVERLAYS: Dict[str, SurfaceOverlay] = {
             "Commit Button": [".btn-commit-legacy", ".btn-commit-final", "button[type='submit']"],
         },
         container_overrides={
+            "#credit_action_container, .confirm-panel": ".legacy-confirm-box",
             "#commit_scope_container": ".legacy-confirm-box",
         },
     ),
