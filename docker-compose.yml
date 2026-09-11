@@ -1,0 +1,22 @@
+services:
+  tandem-system:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: tandem-system
+    ports:
+      - "8000:8000"  # Tandem Operator Console & REST API
+      - "8001:8001"  # Core Banking Simulator (Institution Alpha & Beta)
+      - "8003:8003"  # Card Processor Simulator
+      - "8004:8004"  # Document & Notice Simulator
+    environment:
+      - TANDEM_HOST=0.0.0.0
+      - TANDEM_PORT=8000
+      - CORE_BANK_PORT=8001
+      - PROCESSOR_PORT=8003
+      - DOCUMENTS_PORT=8004
+      - PLAYWRIGHT_HEADLESS=true
+    volumes:
+      - ./evidence:/app/evidence
+      - ./tandem_ledger.db:/app/tandem_ledger.db
+    restart: unless-stopped
