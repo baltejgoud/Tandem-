@@ -78,6 +78,9 @@ async def api_get_credits(case_id: str):
         "member_id": credit.member_id,
         "account_id": credit.account_id,
         "amount": credit.amount,
+        "currency": credit.currency,
+        "business_reference": credit.business_reference,
+        "institution_id": credit.institution_id,
         "memo_code": credit.memo_code,
         "posted_at": credit.posted_at,
         "status": credit.status,
@@ -388,7 +391,13 @@ async def workspace_credit_commit(
             raise ValueError("Account binding mismatch")
         if currency != "USD":
             raise ValueError("Currency binding mismatch")
-        credit = core_bank_state.post_credit(case_id=case_id, member_id=member_id, amount=amount)
+        credit = core_bank_state.post_credit(
+            case_id=case_id,
+            member_id=member_id,
+            amount=amount,
+            currency=currency,
+            business_reference=case_id,
+        )
         member = core_bank_state.members[member_id]
         if core_bank_state.simulate_post_commit_delay_ms > 0:
             await asyncio.sleep(core_bank_state.simulate_post_commit_delay_ms / 1000.0)
