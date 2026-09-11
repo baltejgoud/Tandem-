@@ -54,6 +54,22 @@ class ReconciliationSpec(BaseModel):
     max_inquiry_attempts: int = Field(default=2)
 
 
+class EffectIdentitySpec(BaseModel):
+    """Templates used to bind a COMMIT to a complete immutable business identity."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    institution_id: str
+    procedure_id: str
+    case_id: str
+    capability_id: str
+    member_id: str
+    account_id: str
+    amount: str
+    currency: str
+    business_reference: str
+
+
 class BoundsSpec(BaseModel):
     """Boundary constraints required on monetary and quantitative inputs."""
 
@@ -81,6 +97,9 @@ class EffectSpec(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     effect_class: EffectClass = Field(alias="class", description="Effect classification")
+    identity: Optional[EffectIdentitySpec] = Field(
+        default=None, description="Complete immutable effect-identity template"
+    )
     idempotency_key: Optional[str] = Field(
         default=None,
         description="Idempotency key template e.g. regE:{{case_id}}:provisional_credit",
@@ -101,6 +120,8 @@ class EffectSpec(BaseModel):
             missing = []
             if not self.idempotency_key:
                 missing.append("idempotency_key")
+            if not self.identity:
+                missing.append("identity")
             if not self.precheck:
                 missing.append("precheck")
             if not self.postcheck:
