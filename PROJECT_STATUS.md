@@ -7,7 +7,7 @@
 | **PHASE 2** | Core Banking Simulator (Hostile UI) | **COMPLETED** | `simulators/core_bank/` (framesets, tables, fuzzy search, transposed IDs, memos, compliance) |
 | **PHASE 3** | Processor & Notice Simulators | **COMPLETED** | `simulators/processor/`, `simulators/documents/` (failure switch, timeout, postcheck) |
 | **PHASE 4** | Domain Models & Capability Schema | **COMPLETED** | `tandem/domain/` (Pydantic models, effect classes, commit metadata, bounds, scoped guards) |
-| **PHASE 5** | SQLite Procedure Ledger | Pending | `tandem/ledger/` (append-only events, WAL mode, state reconstruction) |
+| **PHASE 5** | SQLite Procedure Ledger | **COMPLETED** | `tandem/ledger/` (append-only events, WAL mode, state reconstruction across restart) |
 | **PHASE 6** | Surface Abstraction | Pending | `tandem/surfaces/` (semantic targets, locator strategy, container guards) |
 | **PHASE 7** | Raw Playwright Deterministic Capability | Pending | Direct Playwright execution without LLM |
 | **PHASE 8** | Effect Protocol (Precheck -> Guard -> Commit -> Postcheck -> Reconcile) | Pending | `tandem/replay/guards.py`, `precheck.py`, `postcheck.py`, `reconciliation.py` |
