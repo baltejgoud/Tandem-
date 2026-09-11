@@ -20,7 +20,7 @@ def reconcile_commit_execution(
     3. If postcheck is inconclusive -> classify as UNCERTAIN_EFFECT and escalate to human.
     """
     postcheck_result = execute_postcheck(capability, inputs)
-    if postcheck_result and postcheck_result.is_success:
+    if postcheck_result.is_success:
         return ExecutionOutcome(
             category=OutcomeCategory.SUCCESS,
             code=OutcomeCode.COMPLETED,

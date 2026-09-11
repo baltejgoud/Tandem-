@@ -8,6 +8,7 @@ Invariants verified:
 """
 
 from pathlib import Path
+
 import pytest
 from playwright.sync_api import sync_playwright
 
@@ -97,9 +98,12 @@ def test_discovery_compilation_and_zero_llm_replay(tmp_path: Path):
 
         executor = DeterministicExecutor(page=page)
         replay_inputs = {
+            "institution_id": "alpha",
             "member_id": "8830142",
+            "account_id": "CHK-8830142-01",
             "case_id": "D-REPLAY-9901",
             "amount": 340.00,
+            "currency": "USD",
         }
         outcome = executor.execute(capability=loaded_cap, inputs=replay_inputs)
         browser.close()

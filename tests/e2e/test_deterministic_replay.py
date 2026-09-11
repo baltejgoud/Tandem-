@@ -42,7 +42,14 @@ def test_deterministic_replay_posts_credit_with_zero_llm_calls():
         executor = DeterministicExecutor(page)
         outcome = executor.execute(
             capability=capability,
-            inputs={"member_id": "8830142", "case_id": "D-8842", "amount": 340.00},
+            inputs={
+                "institution_id": "alpha",
+                "member_id": "8830142",
+                "account_id": "CHK-8830142-01",
+                "case_id": "D-8842",
+                "amount": 340.00,
+                "currency": "USD",
+            },
         )
 
         browser.close()
