@@ -1,4 +1,5 @@
 """Configuration management for Tandem."""
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 

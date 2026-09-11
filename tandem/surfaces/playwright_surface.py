@@ -70,18 +70,22 @@ class PlaywrightSurface(Surface):
         )
         loc, selector = self._find_best_locator(context, active_candidates, semantic_target)
 
-        text = loc.text_content() or ""
+        text = (loc.text_content() or "").strip()
         tag = loc.evaluate("el => el.tagName.toLowerCase()") or "element"
+        is_enabled = loc.is_enabled()
 
         loc.click()
-        self.page.wait_for_load_state("networkidle")
+        try:
+            self.page.wait_for_load_state("networkidle", timeout=3000)
+        except Exception:
+            pass
 
         return ObservedControl(
             name=semantic_target,
             resolved_selector=selector,
             tag_name=tag,
-            text_content=text.strip(),
-            is_enabled=loc.is_enabled(),
+            text_content=text,
+            is_enabled=is_enabled,
             is_visible=True,
         )
 

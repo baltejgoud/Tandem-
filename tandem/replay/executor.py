@@ -1,0 +1,199 @@
+"""Deterministic capability execution engine using Playwright and Surface abstraction."""
+
+from typing import Any, Dict, Optional
+
+from playwright.sync_api import Page
+
+from tandem.domain.capability import CapabilityDefinition, StepAction
+from tandem.domain.errors import (
+    AmountMismatchError,
+    EntityBindingMismatchError,
+    PageDriftError,
+    SessionExpiredError,
+)
+from tandem.domain.outcomes import ExecutionOutcome, OutcomeCategory, OutcomeCode
+from tandem.policy.telemetry import llm_tracker
+from tandem.surfaces.base import SurfaceOverlay
+from tandem.surfaces.playwright_surface import PlaywrightSurface
+
+
+def render_template(template_str: str, context: Dict[str, Any]) -> str:
+    """Simple template renderer resolving expressions like {{input.member_id}}."""
+    result = template_str
+    for key, val in context.get("input", {}).items():
+        result = result.replace(f"{{{{input.{key}}}}}", str(val))
+        result = result.replace(f"{{{{{key}}}}}", str(val))
+    return result
+
+
+class DeterministicExecutor:
+    """Executes a compiled capability artifact deterministically using Playwright with 0 LLM calls."""
+
+    def __init__(self, page: Page, overlay: Optional[SurfaceOverlay] = None):
+        self.page = page
+        self.surface = PlaywrightSurface(page)
+        self.overlay = overlay
+
+    def execute(self, capability: CapabilityDefinition, inputs: Dict[str, Any]) -> ExecutionOutcome:
+        """Execute capability steps. Replay must perform ZERO LLM calls."""
+        # Baseline LLM count check
+        llm_count_before = llm_tracker.call_count
+
+        context = {"input": inputs}
+        frame_selector = "#core_workspace_frame"  # Standard hostile frame if applicable
+
+        try:
+            # Check for session expiration early if page loaded
+            if "SESSION EXPIRED" in self.page.content():
+                raise SessionExpiredError("Target system session has timed out")
+
+            for step in capability.steps:
+                # 1. Container-scoped guard check immediately prior to or during commit actions
+                if step.action == StepAction.ASSERT_CONTAINER or (
+                    step.semantic_target == "Commit Button" and capability.scoped_guard
+                ):
+                    guard = capability.scoped_guard
+                    if guard:
+                        observed = self.surface.observe_container(
+                            container_selector=guard.container_selector,
+                            frame_selector=frame_selector,
+                            overlay=self.overlay,
+                        )
+
+                        # Enforce entity binding: compare observed member vs expected input
+                        expected_member = render_template(guard.expected_member_template, context)
+                        if (
+                            observed.observed_member_id
+                            and observed.observed_member_id != expected_member
+                        ):
+                            raise EntityBindingMismatchError(
+                                f"Control-scoped guard failed: expected member '{expected_member}' "
+                                f"but observed '{observed.observed_member_id}' inside container "
+                                f"'{guard.container_selector}'"
+                            )
+
+                        # Enforce amount binding if declared
+                        if guard.expected_amount_template:
+                            expected_amt_str = render_template(
+                                guard.expected_amount_template, context
+                            )
+                            expected_amt = float(expected_amt_str)
+                            if (
+                                observed.observed_amount is not None
+                                and abs(observed.observed_amount - expected_amt) > 0.001
+                            ):
+                                raise AmountMismatchError(
+                                    f"Control-scoped guard failed: expected amount {expected_amt:.2f} "
+                                    f"but observed {observed.observed_amount:.2f} inside container"
+                                )
+
+                # 2. Execute step action
+                if step.action == StepAction.NAVIGATE:
+                    url = render_template(step.semantic_target, context)
+                    self.surface.navigate(url)
+
+                elif step.action == StepAction.FILL:
+                    value = (
+                        render_template(step.input_value_template, context)
+                        if step.input_value_template
+                        else ""
+                    )
+                    effective_frame = step.frame_selector or frame_selector
+                    self.surface.resolve_and_fill(
+                        semantic_target=step.semantic_target,
+                        candidates=step.locator_candidates,
+                        value=value,
+                        frame_selector=effective_frame,
+                        overlay=self.overlay,
+                    )
+
+                elif step.action == StepAction.CLICK:
+                    effective_frame = step.frame_selector or frame_selector
+                    self.surface.resolve_and_click(
+                        semantic_target=step.semantic_target,
+                        candidates=step.locator_candidates,
+                        frame_selector=effective_frame,
+                        overlay=self.overlay,
+                    )
+
+            # Invariant check: Assert ZERO LLM calls took place during replay
+            llm_calls_made = llm_tracker.call_count - llm_count_before
+            if llm_calls_made > 0:
+                raise RuntimeError(
+                    f"CRITICAL SAFETY VIOLATION: Replay engine invoked {llm_calls_made} LLM calls! "
+                    f"Replay must be 100% deterministic."
+                )
+
+            # Extract receipt details from page/frame
+            frame = self.page.frame_locator(frame_selector)
+            memo_code = None
+            try:
+                memo_el = frame.locator("#receipt_memo_code, .result-memo-code").first
+                if memo_el.is_visible(timeout=1000):
+                    memo_code = memo_el.text_content().strip()
+            except Exception:
+                pass
+
+            money_moved = False
+            try:
+                money_el = frame.locator("#receipt_money_moved").first
+                if money_el.is_visible(timeout=500):
+                    money_moved = "MONEY_MOVED=TRUE" in (money_el.text_content() or "")
+            except Exception:
+                pass
+
+            return ExecutionOutcome(
+                category=OutcomeCategory.SUCCESS,
+                code=OutcomeCode.COMPLETED,
+                message=f"Capability '{capability.id}' replayed successfully with 0 LLM calls",
+                details={
+                    "memo_code": memo_code,
+                    "money_moved": money_moved,
+                    "drift_events": self.surface.drift_events,
+                },
+                money_moved=money_moved,
+                audit_ref=memo_code,
+            )
+
+        except EntityBindingMismatchError as e:
+            return ExecutionOutcome(
+                category=OutcomeCategory.HARD_FAILURE,
+                code=OutcomeCode.ENTITY_BINDING_MISMATCH,
+                message=str(e),
+                details={"inputs": inputs},
+                money_moved=False,
+            )
+
+        except AmountMismatchError as e:
+            return ExecutionOutcome(
+                category=OutcomeCategory.HARD_FAILURE,
+                code=OutcomeCode.AMOUNT_MISMATCH,
+                message=str(e),
+                details={"inputs": inputs},
+                money_moved=False,
+            )
+
+        except PageDriftError as e:
+            return ExecutionOutcome(
+                category=OutcomeCategory.RECOVERABLE_FAILURE,
+                code=OutcomeCode.PAGE_DRIFT,
+                message=str(e),
+                details={"drift_events": self.surface.drift_events},
+                money_moved=False,
+            )
+
+        except SessionExpiredError as e:
+            return ExecutionOutcome(
+                category=OutcomeCategory.RECOVERABLE_FAILURE,
+                code=OutcomeCode.SESSION_EXPIRED,
+                message=str(e),
+                money_moved=False,
+            )
+
+        except Exception as e:
+            return ExecutionOutcome(
+                category=OutcomeCategory.HARD_FAILURE,
+                code=OutcomeCode.POLICY_VIOLATION,
+                message=f"Replay failed unexpectedly: {e}",
+                money_moved=False,
+            )
