@@ -165,17 +165,17 @@ class LedgerRepository:
     # -----------------------------------------------------------------------
     # Effect Intent
     # -----------------------------------------------------------------------
-    def stage_intent(
-        self, case_id: str, idempotency_key: str, capability_id: str
-    ) -> EffectIntentRecord:
-        intent = EffectIntentRecord(
-            case_id=case_id,
-            idempotency_key=idempotency_key,
-            capability_id=capability_id,
-            intent_status="STAGED",
-        )
-        self.session.add(intent)
-        self.session.flush()
+    def stage_intent(self, case_id: str, idempotency_key: str, capability_id: str) -> EffectIntentRecord:
+        intent = self.find_intent(idempotency_key)
+        if not intent:
+            intent = EffectIntentRecord(
+                case_id=case_id,
+                idempotency_key=idempotency_key,
+                capability_id=capability_id,
+                intent_status="STAGED",
+            )
+            self.session.add(intent)
+            self.session.flush()
         return intent
 
     def find_intent(self, idempotency_key: str) -> Optional[EffectIntentRecord]:

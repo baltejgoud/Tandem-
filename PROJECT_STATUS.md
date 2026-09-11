@@ -10,7 +10,7 @@
 | **PHASE 5** | SQLite Procedure Ledger | **COMPLETED** | `tandem/ledger/` (append-only events, WAL mode, state reconstruction across restart) |
 | **PHASE 6** | Surface Abstraction | **COMPLETED** | `tandem/surfaces/` (semantic targets, PlaywrightSurface, overlays, drift detection) |
 | **PHASE 7** | Raw Playwright Deterministic Capability | **COMPLETED** | `tandem/replay/executor.py`, `tests/e2e/test_deterministic_replay.py` (0 LLM calls invariant verified) |
-| **PHASE 8** | Effect Protocol (Precheck -> Guard -> Commit -> Postcheck -> Reconcile) | Pending | `tandem/replay/guards.py`, `precheck.py`, `postcheck.py`, `reconciliation.py` |
+| **PHASE 8** | Effect Protocol (Precheck -> Guard -> Commit -> Postcheck -> Reconcile) | **COMPLETED** | `tandem/replay/guards.py`, `precheck.py`, `postcheck.py`, `reconciliation.py`, `engine.py` |
 | **PHASE 9** | Reg E Workflow State Machine | Pending | `tandem/workflow/reg_e.py`, `deadlines.py` (business day calculation) |
 | **PHASE 10**| Crash Recovery | Pending | `PROCESS_KILL_AFTER` injection, recovery test suite |
 | **PHASE 11**| Discovery Agent | Pending | `tandem/discovery/agent.py` (controlled browser agent) |
