@@ -17,6 +17,7 @@ OVERLAYS: Dict[str, SurfaceOverlay] = {
         name="Symitar Legacy Platform (Older Skin / Second Institution)",
         selector_overrides={
             "Member Search Input": ["#legacy_search_box", "input[name='q']"],
+            "Post Provisional Credit Link": [".btn-action-legacy", "a.action-credit-btn", "text=Select & Adjust"],
             "Commit Button": [".btn-commit-legacy", ".btn-commit-final", "button[type='submit']"],
         },
         container_overrides={

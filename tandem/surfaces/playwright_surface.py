@@ -81,6 +81,7 @@ class PlaywrightSurface(Surface):
 
         loc.click()
         try:
+            self.page.wait_for_timeout(200)
             self.page.wait_for_load_state("networkidle", timeout=3000)
         except Exception:
             pass
