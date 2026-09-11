@@ -14,6 +14,7 @@ from tandem.domain.money import parse_money
 from tandem.domain.outcomes import ExecutionOutcome, ExecutionPhase, OutcomeCategory, OutcomeCode
 from tandem.ledger.repository import LedgerRepository
 from tandem.policy.engine import PolicyEngine
+from tandem.replay.crash_injection import maybe_crash
 from tandem.replay.executor import DeterministicExecutor, render_template
 from tandem.replay.precheck import execute_precheck
 from tandem.replay.reconciliation import reconcile_commit_execution
@@ -109,18 +110,20 @@ class EffectEngine:
             if identity is None or idempotency_key is None:
                 raise RuntimeError("COMMIT execution reached admission without an effect identity")
             claim = self.repo.claim_effect(identity, self.owner_id)
-            self.repo.record_event(
-                case_id=case_id,
-                event_type="EFFECT_CLAIMED" if claim.acquired else "EFFECT_CLAIM_REJECTED",
-                step_name=capability.id,
-                payload={
-                    "idempotency_key": idempotency_key,
-                    "owner_id": claim.owner_id,
-                    "fencing_token": claim.fencing_token,
-                    "status": claim.status,
-                },
-            )
+            if not claim.acquired:
+                self.repo.record_event(
+                    case_id=case_id,
+                    event_type="EFFECT_CLAIM_REJECTED",
+                    step_name=capability.id,
+                    payload={
+                        "idempotency_key": idempotency_key,
+                        "owner_id": claim.owner_id,
+                        "fencing_token": claim.fencing_token,
+                        "status": claim.status,
+                    },
+                )
             self.session.commit()
+            maybe_crash("C_AFTER_CLAIM")
             if not claim.acquired:
                 code = OutcomeCode(claim.status)
                 if code == OutcomeCode.ALREADY_APPLIED:
@@ -200,6 +203,7 @@ class EffectEngine:
                 )
                 self.session.commit()
                 return precheck_outcome
+            maybe_crash("D_AFTER_PRECHECK")
 
         # -------------------------------------------------------------------
         # 4. Acquire browser-session lease and durably enter APPLYING
@@ -258,6 +262,7 @@ class EffectEngine:
         # -------------------------------------------------------------------
         # 6. Post-Action Settlement, Audit Persist & Lease Release
         # -------------------------------------------------------------------
+        maybe_crash("J_BEFORE_FINAL_LEDGER_EVENT")
         self.repo.complete_execution(
             execution_id=exec_record.id,
             status=outcome.code.value,

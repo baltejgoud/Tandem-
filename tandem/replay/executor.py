@@ -15,6 +15,7 @@ from tandem.domain.errors import (
 )
 from tandem.domain.outcomes import ExecutionOutcome, ExecutionPhase, OutcomeCategory, OutcomeCode
 from tandem.policy.telemetry import llm_tracker
+from tandem.replay.crash_injection import maybe_crash
 from tandem.replay.guards import verify_control_scoped_guard
 from tandem.surfaces.base import SurfaceOverlay
 from tandem.surfaces.playwright_surface import PlaywrightSurface
@@ -49,6 +50,7 @@ class DeterministicExecutor:
         def mark_submit_initiated() -> None:
             nonlocal execution_phase
             execution_phase = ExecutionPhase.SUBMIT_INITIATED
+            maybe_crash("F_BEFORE_SUBMIT")
 
         try:
             # Check for session expiration early if page loaded
@@ -84,6 +86,8 @@ class DeterministicExecutor:
                         ),
                         semantic_target=step.semantic_target,
                     )
+                    if step.action == StepAction.SUBMIT:
+                        maybe_crash("E_AFTER_GUARD")
 
                 # 2. Execute step action
                 if step.action == StepAction.NAVIGATE:
@@ -118,6 +122,7 @@ class DeterministicExecutor:
                     )
                     if step.action == StepAction.SUBMIT:
                         execution_phase = ExecutionPhase.SUBMIT_CONFIRMED
+                        maybe_crash("G_AFTER_TARGET_ACCEPTS")
 
             # Invariant check: Assert ZERO LLM calls took place during replay
             llm_calls_made = llm_tracker.call_count - llm_count_before
@@ -149,7 +154,9 @@ class DeterministicExecutor:
             if capability.effect.effect_class == EffectClass.COMMIT:
                 from tandem.replay.postcheck import execute_postcheck
 
+                maybe_crash("H_BEFORE_POSTCHECK")
                 postcheck = execute_postcheck(capability, inputs)
+                maybe_crash("I_AFTER_POSTCHECK")
                 if not postcheck.is_success:
                     return postcheck.model_copy(
                         update={"execution_phase": ExecutionPhase.AFTER_SUBMIT_UNKNOWN}

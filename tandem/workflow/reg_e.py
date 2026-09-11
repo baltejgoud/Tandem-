@@ -15,6 +15,8 @@ from tandem.domain.money import parse_money
 from tandem.domain.outcomes import OutcomeCategory, OutcomeCode
 from tandem.ledger.repository import LedgerRepository
 from tandem.ledger.service import LedgerService
+from tandem.replay.crash_injection import maybe_crash
+from tandem.replay.crash_recovery import recover_dead_core_claims
 from tandem.replay.engine import EffectEngine
 from tandem.replay.target_reconciliation import reconcile_applied_effects
 from tandem.workflow.deadlines import add_business_days, calculate_reg_e_deadlines
@@ -70,7 +72,24 @@ class RegEWorkflow:
         # 0. Check if case already exists in ledger
         existing_case = self.repo.get_case(case_id)
         if existing_case:
-            snapshot = self.service.reconstruct_case_state(case_id)
+            recovery_failure = recover_dead_core_claims(
+                self.repo, case_id, member_id, amount
+            )
+            if recovery_failure is not None:
+                self.repo.update_case_status(case_id, RegEState.NEEDS_HUMAN.value)
+                self.repo.record_event(
+                    case_id,
+                    "CRASH_RECOVERY_REQUIRES_HUMAN",
+                    "resume.crash_recovery",
+                    payload={"message": recovery_failure.message},
+                )
+                self.session.commit()
+                return {
+                    "status": "NEEDS_HUMAN",
+                    "code": recovery_failure.code.value,
+                    "message": recovery_failure.message,
+                }
+            self.session.commit()
             reconciliation_failure = reconcile_applied_effects(self.repo, case_id)
             if reconciliation_failure is not None:
                 self.repo.update_case_status(case_id, RegEState.NEEDS_HUMAN.value)
@@ -89,6 +108,22 @@ class RegEWorkflow:
                     "code": reconciliation_failure.code.value,
                     "message": reconciliation_failure.message,
                 }
+            deadlines = calculate_reg_e_deadlines(clock)
+            obligation = self.repo.create_obligation(
+                case_id, "NOTICE_2_DAY", add_business_days(clock, 2)
+            )
+            self.repo.create_deadline(
+                case_id, "INVESTIGATION_10_DAY", deadlines["INVESTIGATION_10_DAY"]
+            )
+            self.repo.create_deadline(
+                case_id, "FINAL_RESOLUTION_45_DAY", deadlines["FINAL_RESOLUTION_45_DAY"]
+            )
+            refreshed_case = self.repo.get_case(case_id)
+            if refreshed_case and refreshed_case.money_moved:
+                self.repo.activate_obligation(case_id, "NOTICE_2_DAY")
+                self.repo.create_deadline(case_id, "NOTICE_2_DAY", obligation.due_at)
+            self.session.commit()
+            snapshot = self.service.reconstruct_case_state(case_id)
         else:
             self.repo.create_or_get_case(
                 case_id=case_id,
@@ -96,8 +131,13 @@ class RegEWorkflow:
                 amount=amount,
                 procedure_name="reg_e_dispute",
             )
+            maybe_crash("A_BEFORE_OBLIGATION")
             # Register statutory deadlines
             deadlines = calculate_reg_e_deadlines(clock)
+            notice_due_at = add_business_days(clock, 2)
+            self.repo.create_obligation(case_id, "NOTICE_2_DAY", notice_due_at)
+            self.session.commit()
+            maybe_crash("B_AFTER_OBLIGATION")
             self.repo.create_deadline(
                 case_id, "INVESTIGATION_10_DAY", deadlines["INVESTIGATION_10_DAY"]
             )
@@ -223,6 +263,9 @@ class RegEWorkflow:
         # Step 5: Post Provisional Credit (COMMIT - MOVES MONEY)
         # -------------------------------------------------------------------
         if "core.post_provisional_credit" not in snapshot.completed_capabilities:
+            obligations = self.repo.get_obligations_for_case(case_id)
+            if not any(item.obligation_type == "NOTICE_2_DAY" for item in obligations):
+                raise RuntimeError("NOTICE_2_DAY obligation must exist before provisional credit")
             cap = load_capability_from_yaml("capabilities/core/post_provisional_credit.yaml")
 
             if not self.page:
@@ -268,9 +311,8 @@ class RegEWorkflow:
                 self.transition(case_id, RegEState.FAILED)
                 return {"status": "FAILED", "code": outcome.code.value, "message": outcome.message}
 
-            # Create 2-business-day notice deadline
-            due_at = add_business_days(clock, 2)
-            self.repo.create_deadline(case_id, "NOTICE_2_DAY", due_at=due_at)
+            obligation = self.repo.activate_obligation(case_id, "NOTICE_2_DAY")
+            self.repo.create_deadline(case_id, "NOTICE_2_DAY", due_at=obligation.due_at)
             self.transition(case_id, RegEState.PROVISIONAL_CREDIT_POSTED, money_moved=True)
             self.session.commit()
 
@@ -292,6 +334,7 @@ class RegEWorkflow:
         # Step 6: Dispatch Member Notice (COMMIT)
         # -------------------------------------------------------------------
         if "docs.send_notice" not in snapshot.completed_capabilities:
+            maybe_crash("K_BEFORE_NOTICE")
             self.transition(case_id, RegEState.NOTICE_PENDING)
             notice_deadline = add_business_days(clock, 2).strftime("%Y-%m-%d %H:%M:%S UTC")
 
@@ -309,6 +352,7 @@ class RegEWorkflow:
             if resp.status_code != 200:
                 self.transition(case_id, RegEState.NEEDS_HUMAN)
                 return {"status": "NEEDS_HUMAN", "error": "Notice delivery failed"}
+            maybe_crash("L_AFTER_NOTICE")
 
             exec_rec = self.repo.start_execution(
                 case_id=case_id,
@@ -319,6 +363,7 @@ class RegEWorkflow:
             )
             self.repo.complete_execution(exec_rec.id, status="SUCCESS", audit_ref=f"NOT-{case_id}")
             self.repo.resolve_deadline(case_id, "NOTICE_2_DAY")
+            self.repo.satisfy_obligation(case_id, "NOTICE_2_DAY")
             self.transition(case_id, RegEState.NOTICE_SENT)
 
         # -------------------------------------------------------------------

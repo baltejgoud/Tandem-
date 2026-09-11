@@ -4,7 +4,16 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Integer,
+    Numeric,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -171,6 +180,26 @@ class DeadlineRecord(Base):
     due_at: Mapped[datetime] = mapped_column(DateTime, index=True)
     status: Mapped[str] = mapped_column(String(32), default="PENDING")  # PENDING, MET, OVERDUE
     resolved_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+
+class ObligationRecord(Base):
+    """Durable source fact from which regulated deadline projections are derived."""
+
+    __tablename__ = "obligations"
+    __table_args__ = (UniqueConstraint("case_id", "obligation_type"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    case_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("procedure_cases.case_id"), index=True
+    )
+    obligation_type: Mapped[str] = mapped_column(String(64), index=True)
+    due_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    status: Mapped[str] = mapped_column(String(32), default="PLANNED")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+    activated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    satisfied_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
 
 class LeaseRecord(Base):
