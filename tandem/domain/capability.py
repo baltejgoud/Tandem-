@@ -120,3 +120,14 @@ class CapabilityDefinition(BaseModel):
         }
         raw = json.dumps(data, sort_keys=True)
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def load_capability_from_yaml(path: str) -> CapabilityDefinition:
+    """Load and validate a capability definition from a YAML file."""
+    import yaml
+
+    with open(path, "r", encoding="utf-8") as f:
+        data = yaml.safe_load(f)
+    cap = CapabilityDefinition.model_validate(data)
+    cap.artifact_hash = cap.compute_hash()
+    return cap
