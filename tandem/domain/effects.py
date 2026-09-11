@@ -1,9 +1,12 @@
 """Effect typing and safety metadata specifications for Tandem capabilities."""
 
 from enum import Enum
+from decimal import Decimal
 from typing import Any, Dict, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from tandem.domain.money import Money
 
 
 class EffectClass(str, Enum):
@@ -56,8 +59,10 @@ class BoundsSpec(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    max_amount: float = Field(
-        default=500.00, ge=0.01, description="Upper bound for automated credit"
+    max_amount: Money = Field(
+        default=Decimal("500.00"),
+        ge=Decimal("0.01"),
+        description="Upper bound for automated credit",
     )
     currency: str = Field(default="USD", description="Permitted currency code")
 

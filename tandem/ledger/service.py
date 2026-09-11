@@ -1,6 +1,7 @@
 """Ledger service and state reconstruction across process restarts."""
 
 from dataclasses import dataclass, field
+from decimal import Decimal
 from typing import List, Optional
 
 from sqlalchemy.orm import Session
@@ -18,7 +19,7 @@ class CaseStateSnapshot:
 
     case_id: str
     member_id: str
-    amount: float
+    amount: Decimal
     status: str
     money_moved: bool
     completed_capabilities: List[str] = field(default_factory=list)

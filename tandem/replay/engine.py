@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from tandem.domain.capability import CapabilityDefinition
 from tandem.domain.effects import EffectClass
 from tandem.domain.outcomes import ExecutionOutcome, OutcomeCategory, OutcomeCode
+from tandem.domain.money import parse_money
 from tandem.ledger.repository import LedgerRepository
 from tandem.policy.engine import PolicyEngine
 from tandem.replay.executor import DeterministicExecutor, render_template
@@ -32,7 +33,7 @@ class EffectEngine:
         """Execute a capability according to its declared effect class."""
         case_id = inputs.get("case_id", "UNKNOWN_CASE")
         member_id = inputs.get("member_id", "UNKNOWN_MEMBER")
-        amount = float(inputs.get("amount", 0.0))
+        amount = parse_money(inputs.get("amount", "0.00"))
 
         # Ensure case exists in ledger
         self.repo.create_or_get_case(case_id=case_id, member_id=member_id, amount=amount)

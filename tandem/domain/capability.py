@@ -112,11 +112,13 @@ class CapabilityDefinition(BaseModel):
             "id": self.id,
             "version": self.version,
             "system": self.system,
-            "effect": self.effect.model_dump(by_alias=True),
+            "effect": self.effect.model_dump(by_alias=True, mode="json"),
             "input_schema": self.input_schema,
             "output_schema": self.output_schema,
-            "steps": [s.model_dump() for s in self.steps],
-            "scoped_guard": self.scoped_guard.model_dump() if self.scoped_guard else None,
+            "steps": [s.model_dump(mode="json") for s in self.steps],
+            "scoped_guard": (
+                self.scoped_guard.model_dump(mode="json") if self.scoped_guard else None
+            ),
         }
         raw = json.dumps(data, sort_keys=True)
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()

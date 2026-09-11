@@ -6,10 +6,12 @@ Produces an ActionTrace captured by TraceRecorder.
 """
 
 from typing import Any, Dict, Optional
+
 from playwright.sync_api import Page
 
 from tandem.config import settings
 from tandem.discovery.recorder import DiscoveryTrace, TraceRecorder
+from tandem.domain.money import parse_money
 from tandem.policy.telemetry import llm_tracker
 
 
@@ -33,7 +35,7 @@ class DiscoveryAgent:
         url = portal_url or settings.core_bank_url
         member_id = str(inputs.get("member_id", "8830142"))
         case_id = str(inputs.get("case_id", "D-DISC-001"))
-        amount = float(inputs.get("amount", 340.00))
+        amount = parse_money(inputs.get("amount", "340.00"))
 
         recorder = TraceRecorder(
             capability_id="core.post_provisional_credit",

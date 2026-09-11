@@ -6,6 +6,7 @@ from typing import List, Optional
 from playwright.sync_api import Locator, Page
 
 from tandem.domain.errors import PageDriftError
+from tandem.domain.money import parse_money
 from tandem.surfaces.base import (
     ActionEvidence,
     ObservedControl,
@@ -158,7 +159,7 @@ class PlaywrightSurface(Surface):
         try:
             data_amt = container_loc.get_attribute("data-amount")
             if data_amt:
-                observed_amount = float(data_amt.replace("$", "").replace(",", "").strip())
+                observed_amount = parse_money(data_amt.replace("$", "").replace(",", "").strip())
         except Exception:
             pass
 
@@ -177,10 +178,10 @@ class PlaywrightSurface(Surface):
             amt_loc = container_loc.locator(".scoped-amount").first
             if amt_loc.count() > 0:
                 amt_str = amt_loc.text_content().strip()
-                # Parse monetary float, e.g. "$340.00 USD" -> 340.0
+                # Parse monetary Decimal, e.g. "$340.00 USD" -> Decimal("340.00")
                 match = re.search(r"(\d+(?:\.\d{2})?)", amt_str)
                 if match:
-                    observed_amount = float(match.group(1))
+                    observed_amount = parse_money(match.group(1))
 
         if not observed_case:
             case_loc = container_loc.locator(".scoped-case-id").first

@@ -14,6 +14,7 @@ Implements a realistic legacy banking console with:
 import asyncio
 import html
 import random
+from decimal import Decimal
 from typing import Optional
 
 from fastapi import FastAPI, Form, Query
@@ -307,7 +308,7 @@ async def workspace_credit_confirm(
     member_id: str = Form(...),
     account_id: str = Form(...),
     case_id: str = Form(...),
-    amount: float = Form(...),
+    amount: Decimal = Form(...),
     reason: str = Form(""),
 ):
     if not core_bank_state.session_valid:
@@ -363,7 +364,7 @@ async def workspace_credit_confirm(
 async def workspace_credit_commit(
     member_id: str = Form(...),
     case_id: str = Form(...),
-    amount: float = Form(...),
+    amount: Decimal = Form(...),
 ):
     if not core_bank_state.session_valid:
         return session_expired_response()
@@ -590,7 +591,7 @@ async def inst_beta_credit_entry(member_id: str = Query(...)):
 async def inst_beta_credit_confirm(
     member_id: str = Form(...),
     case_id: str = Form(...),
-    amount: float = Form(...),
+    amount: Decimal = Form(...),
 ):
     member = core_bank_state.members.get(member_id)
     if not member:
@@ -625,7 +626,7 @@ async def inst_beta_credit_confirm(
 async def inst_beta_credit_commit(
     member_id: str = Form(...),
     case_id: str = Form(...),
-    amount: float = Form(...),
+    amount: Decimal = Form(...),
 ):
     credit = core_bank_state.post_credit(case_id=case_id, member_id=member_id, amount=amount)
     member = core_bank_state.members[member_id]

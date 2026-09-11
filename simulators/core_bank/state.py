@@ -3,7 +3,10 @@
 import random
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Dict, List, Optional
+
+from tandem.domain.money import parse_money
 
 
 @dataclass
@@ -11,7 +14,7 @@ class Transaction:
     txn_id: str
     posted_at: str
     description: str
-    amount: float
+    amount: Decimal
     card_last4: str
     status: str = "SETTLED"
 
@@ -22,7 +25,7 @@ class ProvisionalCredit:
     case_id: str
     member_id: str
     account_id: str
-    amount: float
+    amount: Decimal
     memo_code: str
     posted_at: str
     status: str = "POSTED"
@@ -34,7 +37,7 @@ class Member:
     first_name: str
     last_name: str
     account_id: str
-    balance: float
+    balance: Decimal
     transactions: List[Transaction] = field(default_factory=list)
 
 
@@ -65,20 +68,20 @@ class CoreBankState:
             first_name="Jane",
             last_name="DisputeMember",
             account_id="CHK-8830142-01",
-            balance=1240.50,
+            balance=Decimal("1240.50"),
             transactions=[
                 Transaction(
                     txn_id="TXN-99101",
                     posted_at="2026-09-01 14:22:10",
                     description="POS DEBIT - ELECTRONICS STORE",
-                    amount=340.00,
+                    amount=Decimal("340.00"),
                     card_last4="4112",
                 ),
                 Transaction(
                     txn_id="TXN-99088",
                     posted_at="2026-08-28 09:15:00",
                     description="GROCERY MARKET",
-                    amount=85.20,
+                    amount=Decimal("85.20"),
                     card_last4="4112",
                 ),
             ],
@@ -90,13 +93,13 @@ class CoreBankState:
             first_name="John",
             last_name="ConfusableMember",
             account_id="CHK-8830124-01",
-            balance=410.25,
+            balance=Decimal("410.25"),
             transactions=[
                 Transaction(
                     txn_id="TXN-99042",
                     posted_at="2026-08-25 11:05:12",
                     description="COFFEE SHOP",
-                    amount=4.50,
+                    amount=Decimal("4.50"),
                     card_last4="8890",
                 )
             ],
@@ -117,12 +120,13 @@ class CoreBankState:
             random.shuffle(results)
         return results
 
-    def post_credit(self, case_id: str, member_id: str, amount: float) -> ProvisionalCredit:
+    def post_credit(self, case_id: str, member_id: str, amount: Decimal) -> ProvisionalCredit:
         """Apply provisional credit to member account."""
         if member_id not in self.members:
             raise ValueError(f"Member {member_id} not found")
 
         member = self.members[member_id]
+        amount = parse_money(amount)
         memo_code = f"MC-{random.randint(7000, 7999)}"
         credit = ProvisionalCredit(
             credit_id=f"CRD-{random.randint(10000, 99999)}",

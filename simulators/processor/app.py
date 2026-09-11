@@ -8,6 +8,7 @@ Provides:
 """
 
 import html
+from decimal import Decimal
 from typing import Optional
 
 from fastapi import FastAPI, Form, HTTPException, Query
@@ -110,7 +111,7 @@ async def index():
 async def file_chargeback(
     case_id: str = Form(...),
     card_last4: str = Form(...),
-    amount: float = Form(...),
+    amount: Decimal = Form(...),
     dispute_reason: str = Form("Unauthorized Transaction"),
 ):
     if processor_state.session_expired:

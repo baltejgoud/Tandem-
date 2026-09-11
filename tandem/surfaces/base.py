@@ -6,6 +6,8 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
+from tandem.domain.money import Money
+
 
 class LocatorKind(str, Enum):
     CSS = "CSS"
@@ -34,7 +36,8 @@ class ObservedRecord:
     container_selector: str
     observed_member_id: Optional[str] = None
     observed_account_id: Optional[str] = None
-    observed_amount: Optional[float] = None
+    observed_amount: Optional[Money] = None
+    observed_currency: Optional[str] = None
     observed_case_id: Optional[str] = None
     raw_text: str = ""
     attributes: Dict[str, str] = field(default_factory=dict)

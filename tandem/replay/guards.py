@@ -4,6 +4,7 @@ from typing import Any, Dict, Optional
 
 from tandem.domain.capability import CapabilityDefinition
 from tandem.domain.errors import AmountMismatchError, EntityBindingMismatchError
+from tandem.domain.money import parse_money
 from tandem.surfaces.base import Surface, SurfaceOverlay
 
 
@@ -39,8 +40,8 @@ def verify_control_scoped_guard(
             )
 
     if "amount" in inputs and observed.observed_amount is not None:
-        expected_amount = float(inputs["amount"])
-        if abs(observed.observed_amount - expected_amount) > 0.001:
+        expected_amount = parse_money(inputs["amount"])
+        if observed.observed_amount != expected_amount:
             raise AmountMismatchError(
                 f"Control-scoped guard violation: expected amount {expected_amount:.2f}, "
                 f"but observed {observed.observed_amount:.2f} inside container."

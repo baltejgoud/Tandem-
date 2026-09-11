@@ -3,7 +3,10 @@
 import random
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Dict, Optional
+
+from tandem.domain.money import parse_money
 
 
 @dataclass
@@ -11,7 +14,7 @@ class Chargeback:
     chargeback_id: str
     case_id: str
     card_last4: str
-    amount: float
+    amount: Decimal
     dispute_reason: str
     network_ref: str
     created_at: str
@@ -37,9 +40,10 @@ class ProcessorState:
         self,
         case_id: str,
         card_last4: str,
-        amount: float,
+        amount: Decimal,
         dispute_reason: str = "Unauthorized Debit",
     ) -> Chargeback:
+        amount = parse_money(amount)
         network_ref = f"VISA-DISP-{random.randint(10000, 99999)}"
         cb = Chargeback(
             chargeback_id=f"CB-{random.randint(50000, 59999)}",
