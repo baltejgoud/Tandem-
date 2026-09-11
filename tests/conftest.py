@@ -11,5 +11,7 @@ def init_test_servers():
 
 @pytest.fixture(autouse=True)
 def clean_simulator_states():
-    """Reset all simulators to pristine initial seed state before every test."""
+    """Reset all simulators to pristine initial seed state before and after every test."""
+    reset_all_simulators()
+    yield
     reset_all_simulators()

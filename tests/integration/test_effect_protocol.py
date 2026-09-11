@@ -79,7 +79,9 @@ def test_precheck_prevents_duplicate_money_movement(temp_session):
             capability=cap,
             inputs={"member_id": "8830142", "case_id": "D-8842", "amount": 340.00},
         )
-        assert outcome_1.category == OutcomeCategory.SUCCESS
+        assert (
+            outcome_1.category == OutcomeCategory.SUCCESS
+        ), f"Outcome 1 failed: {outcome_1.code} - {outcome_1.message}"
         assert outcome_1.code == OutcomeCode.COMPLETED
         assert outcome_1.money_moved is True
         first_memo = outcome_1.audit_ref

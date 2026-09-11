@@ -59,15 +59,18 @@ def test_crash_mid_procedure_and_safe_resume(shared_db_path: str):
             # Enable kill_after_credit injection
             wf_1 = RegEWorkflow(session=session_1, page=page, kill_after_credit=True)
 
+            run_res = None
+            run_err = None
             try:
-                wf_1.run_case(
+                run_res = wf_1.run_case(
                     case_id="D-CRASH-8842",
                     member_id="8830142",
                     amount=340.00,
                     card_last4="4112",
                     injected_clock=clock,
                 )
-            except RuntimeError as err:
+            except Exception as err:
+                run_err = err
                 if "PROCESS_KILL_AFTER" in str(err):
                     crashed = True
             finally:
@@ -77,7 +80,9 @@ def test_crash_mid_procedure_and_safe_resume(shared_db_path: str):
     engine_1.dispose()
     del session_factory_1
 
-    assert crashed is True, "Expected process crash injection after provisional credit"
+    assert (
+        crashed is True
+    ), f"Expected process crash injection after provisional credit, got res={run_res}, err={run_err}"
 
     # Verify state of the outside world after crash:
     # Money moved! Balance increased by $340.00
