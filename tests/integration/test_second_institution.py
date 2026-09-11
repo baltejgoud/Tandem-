@@ -7,7 +7,6 @@ Verifies:
 4. Replay executes with ZERO LLM calls across institutions.
 """
 
-from pathlib import Path
 import pytest
 from playwright.sync_api import sync_playwright
 
@@ -45,9 +44,12 @@ def test_second_institution_replay_with_surface_overlay():
             step.semantic_target = "http://127.0.0.1:8001/inst_beta"
 
     inputs = {
+        "institution_id": "beta",
         "member_id": "8830142",
+        "account_id": "CHK-8830142-01",
         "case_id": "D-BETA-7701",
         "amount": 340.00,
+        "currency": "USD",
     }
 
     # -------------------------------------------------------------------

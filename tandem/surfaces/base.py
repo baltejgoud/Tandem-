@@ -31,14 +31,18 @@ class ObservedControl:
 
 @dataclass
 class ObservedRecord:
-    """Logical record extracted from a parent container or row enclosing a control."""
+    """Logical record extracted from the form owned by a mutating control."""
 
     container_selector: str
+    observed_institution_id: Optional[str] = None
     observed_member_id: Optional[str] = None
     observed_account_id: Optional[str] = None
     observed_amount: Optional[Money] = None
     observed_currency: Optional[str] = None
     observed_case_id: Optional[str] = None
+    submission_values: Dict[str, List[str]] = field(default_factory=dict)
+    submission_action: Optional[str] = None
+    submission_method: Optional[str] = None
     raw_text: str = ""
     attributes: Dict[str, str] = field(default_factory=dict)
 
@@ -105,6 +109,8 @@ class Surface(ABC):
         container_selector: str,
         frame_selector: Optional[str] = None,
         overlay: Optional[SurfaceOverlay] = None,
+        control_candidates: Optional[List[str]] = None,
+        semantic_target: str = "Mutating submit control",
     ) -> ObservedRecord:
         pass
 

@@ -1,6 +1,5 @@
 """Playwright implementation of the Surface abstraction."""
 
-import re
 from typing import List, Optional
 
 from playwright.sync_api import Locator, Page
@@ -126,6 +125,8 @@ class PlaywrightSurface(Surface):
         container_selector: str,
         frame_selector: Optional[str] = None,
         overlay: Optional[SurfaceOverlay] = None,
+        control_candidates: Optional[List[str]] = None,
+        semantic_target: str = "Mutating submit control",
     ) -> ObservedRecord:
         context = self._get_context(frame_selector)
         active_selector = (
@@ -141,59 +142,66 @@ class PlaywrightSurface(Surface):
             raise PageDriftError(f"Container element '{active_selector}' not visible on surface")
 
         raw_text = container_loc.inner_text() or ""
+        candidates = control_candidates or ["button[type='submit']", "input[type='submit']"]
+        active_candidates = (
+            overlay.get_candidates(semantic_target, candidates) if overlay else candidates
+        )
+        control = None
+        for candidate in active_candidates:
+            matches = container_loc.locator(candidate)
+            if matches.count() == 1 and matches.first.is_visible():
+                control = matches.first
+                break
 
-        # Extract scoped elements within this container only
-        observed_member = None
-        observed_account = None
+        submission = None
+        if control is not None:
+            submission = control.evaluate(
+                """control => {
+                    const form = control.form;
+                    if (!form) return null;
+                    const values = {};
+                    for (const element of form.elements) {
+                        if (!element.name || element.disabled) continue;
+                        const type = (element.type || '').toLowerCase();
+                        if ((type === 'checkbox' || type === 'radio') && !element.checked) continue;
+                        if (['button', 'reset', 'file'].includes(type)) continue;
+                        if (type === 'submit' && element !== control) continue;
+                        if (!values[element.name]) values[element.name] = [];
+                        values[element.name].push(String(element.value));
+                    }
+                    return {
+                        values,
+                        action: form.action,
+                        method: form.method.toUpperCase(),
+                    };
+                }"""
+            )
+
+        values = submission["values"] if submission else {}
+
+        def one(name: str) -> Optional[str]:
+            field_values = values.get(name, [])
+            return field_values[0].strip() if len(field_values) == 1 else None
+
+        amount_value = one("amount")
         observed_amount = None
-        observed_case = None
-
-        # Try data attributes
-        try:
-            data_member = container_loc.get_attribute("data-member-id")
-            if data_member:
-                observed_member = data_member.strip()
-        except Exception:
-            pass
-
-        try:
-            data_amt = container_loc.get_attribute("data-amount")
-            if data_amt:
-                observed_amount = parse_money(data_amt.replace("$", "").replace(",", "").strip())
-        except Exception:
-            pass
-
-        # Try scoped CSS classes within container
-        if not observed_member:
-            m_loc = container_loc.locator(".scoped-member-id").first
-            if m_loc.count() > 0:
-                observed_member = m_loc.text_content().strip()
-
-        if not observed_account:
-            a_loc = container_loc.locator(".scoped-account-id").first
-            if a_loc.count() > 0:
-                observed_account = a_loc.text_content().strip()
-
-        if observed_amount is None:
-            amt_loc = container_loc.locator(".scoped-amount").first
-            if amt_loc.count() > 0:
-                amt_str = amt_loc.text_content().strip()
-                # Parse monetary Decimal, e.g. "$340.00 USD" -> Decimal("340.00")
-                match = re.search(r"(\d+(?:\.\d{2})?)", amt_str)
-                if match:
-                    observed_amount = parse_money(match.group(1))
-
-        if not observed_case:
-            case_loc = container_loc.locator(".scoped-case-id").first
-            if case_loc.count() > 0:
-                observed_case = case_loc.text_content().strip()
+        if amount_value is not None:
+            try:
+                observed_amount = parse_money(amount_value)
+            except ValueError:
+                observed_amount = None
 
         return ObservedRecord(
             container_selector=active_selector,
-            observed_member_id=observed_member,
-            observed_account_id=observed_account,
+            observed_institution_id=one("institution_id"),
+            observed_member_id=one("member_id"),
+            observed_account_id=one("account_id"),
             observed_amount=observed_amount,
-            observed_case_id=observed_case,
+            observed_currency=one("currency"),
+            observed_case_id=one("case_id"),
+            submission_values=values,
+            submission_action=submission["action"] if submission else None,
+            submission_method=submission["method"] if submission else None,
             raw_text=raw_text,
         )
 

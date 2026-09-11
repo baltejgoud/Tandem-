@@ -292,6 +292,81 @@ def test_guard_contract_requires_currency_binding() -> None:
     assert "expected_currency_template" in guard_model.model_fields
 
 
+@pytest.mark.parametrize(
+    ("field", "submitted_value", "expected_code"),
+    [
+        ("institution_id", "other-bank", OutcomeCode.ENTITY_BINDING_MISMATCH),
+        ("member_id", "8830124", OutcomeCode.ENTITY_BINDING_MISMATCH),
+        ("account_id", "CHK-WRONG-01", OutcomeCode.ENTITY_BINDING_MISMATCH),
+        ("case_id", "D-WRONG-CASE", OutcomeCode.ENTITY_BINDING_MISMATCH),
+        ("amount", "34.00", OutcomeCode.AMOUNT_MISMATCH),
+        ("currency", "EUR", OutcomeCode.ENTITY_BINDING_MISMATCH),
+    ],
+)
+def test_guard_binds_exact_owning_form_submission(
+    field: str,
+    submitted_value: str,
+    expected_code: OutcomeCode,
+) -> None:
+    capability = load_capability_from_yaml("capabilities/core/post_provisional_credit.yaml")
+    capability.steps = [capability.steps[-1]]
+    inputs = {
+        "institution_id": "alpha",
+        "member_id": "8830142",
+        "account_id": "CHK-8830142-01",
+        "case_id": "D-FORM-BINDING",
+        "amount": "340.00",
+        "currency": "USD",
+    }
+
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        page = browser.new_page()
+        page.goto("http://127.0.0.1:8001/workspace/credit/entry?member_id=8830142")
+        page.locator("input[name='case_id']").fill(inputs["case_id"])
+        page.locator("input[name='amount']").fill(inputs["amount"])
+        page.locator("button.btn-proceed").click()
+        page.locator(f"form[action$='/commit'] [name='{field}']").evaluate(
+            "(element, value) => element.value = value", submitted_value
+        )
+        outcome = DeterministicExecutor(page).execute(capability, inputs)
+        browser.close()
+
+    assert outcome.category == OutcomeCategory.HARD_FAILURE
+    assert outcome.code == expected_code
+    assert core_bank_state.credits == {}
+
+
+def test_guard_rejects_missing_owning_form_evidence() -> None:
+    capability = load_capability_from_yaml("capabilities/core/post_provisional_credit.yaml")
+    capability.steps = [capability.steps[-1]]
+    inputs = {
+        "institution_id": "alpha",
+        "member_id": "8830142",
+        "account_id": "CHK-8830142-01",
+        "case_id": "D-FORM-MISSING",
+        "amount": "340.00",
+        "currency": "USD",
+    }
+
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        page = browser.new_page()
+        page.goto("http://127.0.0.1:8001/workspace/credit/entry?member_id=8830142")
+        page.locator("input[name='case_id']").fill(inputs["case_id"])
+        page.locator("input[name='amount']").fill(inputs["amount"])
+        page.locator("button.btn-proceed").click()
+        page.locator("form[action$='/commit'] input[name='account_id']").evaluate(
+            "element => element.remove()"
+        )
+        outcome = DeterministicExecutor(page).execute(capability, inputs)
+        browser.close()
+
+    assert outcome.category == OutcomeCategory.HARD_FAILURE
+    assert outcome.code == OutcomeCode.ENTITY_BINDING_MISMATCH
+    assert core_bank_state.credits == {}
+
+
 @pytest.mark.parametrize("bad_value", ["NaN", "Infinity", "-Infinity"])
 def test_non_finite_money_is_rejected_at_input_boundary(bad_value: str) -> None:
     capability = load_capability_from_yaml(str(ARTIFACT))

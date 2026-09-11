@@ -347,9 +347,12 @@ async def workspace_credit_confirm(
         </div>
 
         <form method="POST" action="/workspace/credit/commit">
+            <input type="hidden" name="institution_id" value="alpha" />
             <input type="hidden" name="member_id" value="{html.escape(member.member_id)}" />
+            <input type="hidden" name="account_id" value="{html.escape(account_id)}" />
             <input type="hidden" name="case_id" value="{html.escape(case_id)}" />
             <input type="hidden" name="amount" value="{amount}" />
+            <input type="hidden" name="currency" value="USD" />
             <button type="submit" id="{submit_btn_id}" class="btn-commit-final" style="background:#cc0000; color:#fff; font-weight:bold; font-size:12px; padding:8px 20px; border:2px outset #fff; cursor:pointer;">
                 POST PROVISIONAL CREDIT NOW
             </button>
@@ -362,9 +365,12 @@ async def workspace_credit_confirm(
 
 @app.post("/workspace/credit/commit", response_class=HTMLResponse)
 async def workspace_credit_commit(
+    institution_id: str = Form(...),
     member_id: str = Form(...),
+    account_id: str = Form(...),
     case_id: str = Form(...),
     amount: Decimal = Form(...),
+    currency: str = Form(...),
 ):
     if not core_bank_state.session_valid:
         return session_expired_response()
@@ -373,6 +379,13 @@ async def workspace_credit_commit(
         await asyncio.sleep(core_bank_state.simulate_latency_ms / 1000.0)
 
     try:
+        member = core_bank_state.members.get(member_id)
+        if institution_id != "alpha":
+            raise ValueError("Institution binding mismatch")
+        if not member or account_id != member.account_id:
+            raise ValueError("Account binding mismatch")
+        if currency != "USD":
+            raise ValueError("Currency binding mismatch")
         credit = core_bank_state.post_credit(case_id=case_id, member_id=member_id, amount=amount)
         member = core_bank_state.members[member_id]
     except Exception as e:
@@ -606,12 +619,16 @@ async def inst_beta_credit_confirm(
     <div class="legacy-confirm-box" id="commit_scope_container" data-member-id="{html.escape(member.member_id)}" data-amount="{amount:.2f}">
         <h3 style="color:#c0392b;">CONFIRMATION OF PROVISIONAL CREDIT</h3>
         <p>Target Member: <strong class="scoped-member-id">{html.escape(member.member_id)}</strong></p>
+        <p>Target Account: <strong class="scoped-account-id">{html.escape(member.account_id)}</strong></p>
         <p>Credit Amount: <strong class="scoped-amount">${amount:,.2f} USD</strong></p>
         <p>Case Ref: <strong class="scoped-case-id">{html.escape(case_id)}</strong></p>
         <form method="POST" action="/inst_beta/workspace/credit/commit">
+            <input type="hidden" name="institution_id" value="beta" />
             <input type="hidden" name="member_id" value="{html.escape(member.member_id)}" />
+            <input type="hidden" name="account_id" value="{html.escape(member.account_id)}" />
             <input type="hidden" name="case_id" value="{html.escape(case_id)}" />
             <input type="hidden" name="amount" value="{amount}" />
+            <input type="hidden" name="currency" value="USD" />
             <button type="submit" class="btn-commit-legacy" style="padding:8px 16px; background:#c0392b; color:#fff; font-weight:bold; border:none; cursor:pointer;">
                 CONFIRM POSTING (LEGACY CORE)
             </button>
@@ -624,10 +641,20 @@ async def inst_beta_credit_confirm(
 
 @app.post("/inst_beta/workspace/credit/commit", response_class=HTMLResponse)
 async def inst_beta_credit_commit(
+    institution_id: str = Form(...),
     member_id: str = Form(...),
+    account_id: str = Form(...),
     case_id: str = Form(...),
     amount: Decimal = Form(...),
+    currency: str = Form(...),
 ):
+    member = core_bank_state.members.get(member_id)
+    if institution_id != "beta":
+        return HTMLResponse("<h2>Institution binding mismatch</h2>", status_code=400)
+    if not member or account_id != member.account_id:
+        return HTMLResponse("<h2>Account binding mismatch</h2>", status_code=400)
+    if currency != "USD":
+        return HTMLResponse("<h2>Currency binding mismatch</h2>", status_code=400)
     credit = core_bank_state.post_credit(case_id=case_id, member_id=member_id, amount=amount)
     member = core_bank_state.members[member_id]
 

@@ -13,9 +13,9 @@ from tandem.domain.errors import (
     PageDriftError,
     SessionExpiredError,
 )
-from tandem.domain.money import parse_money
 from tandem.domain.outcomes import ExecutionOutcome, OutcomeCategory, OutcomeCode
 from tandem.policy.telemetry import llm_tracker
+from tandem.replay.guards import verify_control_scoped_guard
 from tandem.surfaces.base import SurfaceOverlay
 from tandem.surfaces.playwright_surface import PlaywrightSurface
 
@@ -70,40 +70,17 @@ class DeterministicExecutor:
                 if step.action == StepAction.ASSERT_CONTAINER or (
                     step.semantic_target == "Commit Button" and capability.scoped_guard
                 ):
-                    guard = capability.scoped_guard
-                    if guard:
-                        observed = self.surface.observe_container(
-                            container_selector=guard.container_selector,
-                            frame_selector=frame_selector,
-                            overlay=self.overlay,
-                        )
-
-                        # Enforce entity binding: compare observed member vs expected input
-                        expected_member = render_template(guard.expected_member_template, context)
-                        if (
-                            observed.observed_member_id
-                            and observed.observed_member_id != expected_member
-                        ):
-                            raise EntityBindingMismatchError(
-                                f"Control-scoped guard failed: expected member '{expected_member}' "
-                                f"but observed '{observed.observed_member_id}' inside container "
-                                f"'{guard.container_selector}'"
-                            )
-
-                        # Enforce amount binding if declared
-                        if guard.expected_amount_template:
-                            expected_amt_str = render_template(
-                                guard.expected_amount_template, context
-                            )
-                            expected_amt = parse_money(expected_amt_str)
-                            if (
-                                observed.observed_amount is not None
-                                and observed.observed_amount != expected_amt
-                            ):
-                                raise AmountMismatchError(
-                                    f"Control-scoped guard failed: expected amount {expected_amt:.2f} "
-                                    f"but observed {observed.observed_amount:.2f} inside container"
-                                )
+                    verify_control_scoped_guard(
+                        capability=capability,
+                        inputs=inputs,
+                        surface=self.surface,
+                        frame_selector=step.frame_selector or frame_selector,
+                        overlay=self.overlay,
+                        control_candidates=(
+                            step.locator_candidates if step.action == StepAction.CLICK else None
+                        ),
+                        semantic_target=step.semantic_target,
+                    )
 
                 # 2. Execute step action
                 if step.action == StepAction.NAVIGATE:
