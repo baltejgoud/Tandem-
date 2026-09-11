@@ -2,8 +2,8 @@
 
 | Phase | Description | Status | Verification / Artifacts |
 |---|---|---|---|
-| **PHASE 0** | Specification + Architecture Research | **IN PROGRESS** | `docs/product-spec.md`, `docs/architecture-research.md` |
-| **PHASE 1** | Repository Scaffolding + Python Environment | Pending | `pyproject.toml`, `uv.lock`, `.env.example`, `.gitignore`, `Makefile` |
+| **PHASE 0** | Specification + Architecture Research | **COMPLETED** | `docs/product-spec.md`, `docs/architecture-research.md` |
+| **PHASE 1** | Repository Scaffolding + Python Environment | **COMPLETED** | `pyproject.toml`, `.venv` (Python 3.12.10), Playwright Chromium, `Makefile` |
 | **PHASE 2** | Core Banking Simulator (Hostile UI) | Pending | `simulators/core_bank/` (framesets, tables, fuzzy search, transposed IDs) |
 | **PHASE 3** | Processor & Notice Simulators | Pending | `simulators/processor/`, `simulators/documents/` (failure switch, timeout) |
 | **PHASE 4** | Domain Models & Capability Schema | Pending | `tandem/domain/` (Pydantic models, effect classes, commit metadata) |
