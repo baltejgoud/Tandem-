@@ -181,6 +181,22 @@ class RegEWorkflow:
                 self.transition(case_id, RegEState.NEEDS_HUMAN)
                 return {"status": "POLICY_DENIED", "message": outcome.message}
 
+            if outcome.category == OutcomeCategory.UNCERTAIN_EFFECT:
+                self.transition(case_id, RegEState.UNCERTAIN_EFFECT)
+                return {
+                    "status": "UNCERTAIN_EFFECT",
+                    "code": outcome.code.value,
+                    "message": outcome.message,
+                }
+
+            if outcome.category == OutcomeCategory.RECOVERABLE_FAILURE:
+                self.transition(case_id, RegEState.NEEDS_HUMAN)
+                return {
+                    "status": "RECOVERABLE_FAILURE",
+                    "code": outcome.code.value,
+                    "message": outcome.message,
+                }
+
             if outcome.category == OutcomeCategory.HARD_FAILURE:
                 self.transition(case_id, RegEState.FAILED)
                 return {"status": "FAILED", "code": outcome.code.value, "message": outcome.message}
