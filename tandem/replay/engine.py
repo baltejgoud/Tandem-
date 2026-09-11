@@ -9,9 +9,9 @@ from sqlalchemy.orm import Session
 
 from tandem.domain.capability import CapabilityDefinition
 from tandem.domain.effects import EffectClaimStatus, EffectClass
-from tandem.domain.outcomes import ExecutionOutcome, OutcomeCategory, OutcomeCode
 from tandem.domain.identity import EffectIdentity
 from tandem.domain.money import parse_money
+from tandem.domain.outcomes import ExecutionOutcome, ExecutionPhase, OutcomeCategory, OutcomeCode
 from tandem.ledger.repository import LedgerRepository
 from tandem.policy.engine import PolicyEngine
 from tandem.replay.executor import DeterministicExecutor, render_template
@@ -232,6 +232,15 @@ class EffectEngine:
         # -------------------------------------------------------------------
         try:
             outcome = self.executor.execute(capability=capability, inputs=inputs)
+            if capability.effect.effect_class == EffectClass.COMMIT and (
+                outcome.code == OutcomeCode.POSSIBLY_APPLIED
+                or outcome.execution_phase == ExecutionPhase.AFTER_SUBMIT_UNKNOWN
+            ):
+                outcome = reconcile_commit_execution(
+                    capability=capability,
+                    inputs=inputs,
+                    error_message=outcome.message,
+                )
         except Exception as exc:
             # Network drop or browser crash around commit -> invoke reconciliation!
             if capability.effect.effect_class == EffectClass.COMMIT:

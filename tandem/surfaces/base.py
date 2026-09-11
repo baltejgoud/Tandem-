@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from tandem.domain.money import Money
 
@@ -89,6 +89,7 @@ class Surface(ABC):
         candidates: List[str],
         frame_selector: Optional[str] = None,
         overlay: Optional[SurfaceOverlay] = None,
+        before_click: Optional[Callable[[], None]] = None,
     ) -> ObservedControl:
         pass
 

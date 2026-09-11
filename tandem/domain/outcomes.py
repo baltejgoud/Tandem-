@@ -19,11 +19,21 @@ class OutcomeCategory(str, Enum):
     NEEDS_HUMAN = "NEEDS_HUMAN"  # Requires human operator review (interstitial, lease handoff)
 
 
+class ExecutionPhase(str, Enum):
+    """How far an execution progressed relative to an irreversible submit."""
+
+    BEFORE_SUBMIT = "BEFORE_SUBMIT"
+    SUBMIT_INITIATED = "SUBMIT_INITIATED"
+    SUBMIT_CONFIRMED = "SUBMIT_CONFIRMED"
+    AFTER_SUBMIT_UNKNOWN = "AFTER_SUBMIT_UNKNOWN"
+
+
 class OutcomeCode(str, Enum):
     """Detailed result codes for execution telemetry and decision routing."""
 
     # SUCCESS
     COMPLETED = "COMPLETED"
+    CONFIRMED_APPLIED = "CONFIRMED_APPLIED"
     NOT_APPLIED = "NOT_APPLIED"
     CONFIRMED_NOT_APPLIED = "CONFIRMED_NOT_APPLIED"
 
@@ -53,6 +63,7 @@ class OutcomeCode(str, Enum):
     POLICY_VIOLATION = "POLICY_VIOLATION"
 
     # UNCERTAIN_EFFECT
+    POSSIBLY_APPLIED = "POSSIBLY_APPLIED"
     UNCERTAIN_EFFECT = "UNCERTAIN_EFFECT"
 
     # NEEDS_HUMAN
@@ -69,6 +80,7 @@ class ExecutionOutcome(BaseModel):
     details: Dict[str, Any] = Field(default_factory=dict)
     money_moved: bool = False
     audit_ref: Optional[str] = None
+    execution_phase: ExecutionPhase = ExecutionPhase.BEFORE_SUBMIT
 
     @property
     def is_success(self) -> bool:

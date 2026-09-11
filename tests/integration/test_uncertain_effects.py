@@ -10,12 +10,11 @@ Verifies:
 
 from datetime import datetime, timezone
 from pathlib import Path
-from unittest.mock import patch
+
 import pytest
 from playwright.sync_api import sync_playwright
 
 from simulators.core_bank.state import core_bank_state
-from simulators.documents.state import document_state
 from simulators.processor.state import processor_state
 from tandem.domain.capability import load_capability_from_yaml
 from tandem.domain.outcomes import OutcomeCategory, OutcomeCode
@@ -88,33 +87,35 @@ def test_postcheck_reconciles_interrupted_chargeback_and_proceeds(temp_session):
 
 
 def test_dropped_connection_without_confirmation_escalates_to_uncertain_effect(temp_session):
-    """Scenario 8B: Ambiguous COMMIT interruption where postcheck cannot confirm state."""
+    """Scenario 8B: real browser timeout after commit plus failed inquiry is uncertain."""
     case_id = "D-UNCERTAIN-DROP"
     member_id = "8830142"
     amount = 340.00
 
     cap = load_capability_from_yaml("capabilities/core/post_provisional_credit.yaml")
+    cap.steps = [cap.steps[-1]]
+    core_bank_state.simulate_post_commit_delay_ms = 2000
+    core_bank_state.fail_credit_lookup_when_present = True
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         page = browser.new_page()
+        page.goto(f"http://127.0.0.1:8001/workspace/credit/entry?member_id={member_id}")
+        page.locator("input[name='case_id']").fill(case_id)
+        page.locator("input[name='amount']").fill(str(amount))
+        page.locator("button.btn-proceed").click()
+        page.set_default_timeout(500)
+        page.set_default_navigation_timeout(500)
 
         engine = EffectEngine(session=temp_session, page=page)
-
-        # Simulate connection drop during browser execution AND postcheck unable to find record
-        with patch.object(
-            engine.executor,
-            "execute",
-            side_effect=RuntimeError("Connection reset by peer during form POST"),
-        ):
-            outcome = engine.execute_capability(
-                capability=cap,
-                inputs={"member_id": member_id, "case_id": case_id, "amount": amount},
-            )
+        outcome = engine.execute_capability(
+            capability=cap,
+            inputs={"member_id": member_id, "case_id": case_id, "amount": amount},
+        )
         browser.close()
 
     # INVARIANT: Must NOT blindly retry! Must classify as UNCERTAIN_EFFECT!
-    assert outcome.category == OutcomeCategory.UNCERTAIN_EFFECT
+    assert outcome.category == OutcomeCategory.UNCERTAIN_EFFECT, outcome.model_dump()
     assert outcome.code == OutcomeCode.UNCERTAIN_EFFECT
     assert outcome.money_moved is False
     assert "Automatic retry is strictly forbidden" in outcome.message
@@ -131,5 +132,46 @@ def test_dropped_connection_without_confirmation_escalates_to_uncertain_effect(t
     event_types = [e.event_type for e in events]
     assert "UNCERTAIN_EFFECT_ESCALATION" in event_types
 
-    # Ensure money did not move
-    assert core_bank_state.members[member_id].balance == 1240.50
+    # The target did commit before its response became unavailable. A second run
+    # remains fenced and cannot blindly repeat the COMMIT.
+    assert core_bank_state.members[member_id].balance == 1580.50
+    assert len(core_bank_state.credits) == 1
+    core_bank_state.fail_credit_lookup_when_present = False
+    second = engine.execute_capability(
+        capability=cap,
+        inputs={"member_id": member_id, "case_id": case_id, "amount": amount},
+    )
+    assert second.code == OutcomeCode.ALREADY_CLAIMED
+    assert core_bank_state.members[member_id].balance == 1580.50
+    assert len(core_bank_state.credits) == 1
+
+
+def test_real_browser_timeout_after_commit_reconciles_exact_effect(temp_session):
+    case_id = "D-REAL-BROWSER-RECON"
+    member_id = "8830142"
+    cap = load_capability_from_yaml("capabilities/core/post_provisional_credit.yaml")
+    cap.steps = [cap.steps[-1]]
+    core_bank_state.simulate_post_commit_delay_ms = 2000
+
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        page = browser.new_page()
+        page.goto(f"http://127.0.0.1:8001/workspace/credit/entry?member_id={member_id}")
+        page.locator("input[name='case_id']").fill(case_id)
+        page.locator("input[name='amount']").fill("340.00")
+        page.locator("button.btn-proceed").click()
+        page.set_default_timeout(500)
+        page.set_default_navigation_timeout(500)
+        engine = EffectEngine(session=temp_session, page=page)
+        outcome = engine.execute_capability(
+            capability=cap,
+            inputs={"member_id": member_id, "case_id": case_id, "amount": "340.00"},
+        )
+        browser.close()
+
+    assert outcome.category == OutcomeCategory.SUCCESS, outcome.model_dump()
+    assert outcome.code == OutcomeCode.CONFIRMED_APPLIED
+    assert outcome.execution_phase.value == "SUBMIT_CONFIRMED"
+    assert outcome.audit_ref is not None
+    assert core_bank_state.members[member_id].balance == 1580.50
+    assert len(core_bank_state.credits) == 1

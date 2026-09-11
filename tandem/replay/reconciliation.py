@@ -3,7 +3,7 @@
 from typing import Any, Dict
 
 from tandem.domain.capability import CapabilityDefinition
-from tandem.domain.outcomes import ExecutionOutcome, OutcomeCategory, OutcomeCode
+from tandem.domain.outcomes import ExecutionOutcome, ExecutionPhase, OutcomeCategory, OutcomeCode
 from tandem.replay.postcheck import execute_postcheck
 
 
@@ -23,7 +23,7 @@ def reconcile_commit_execution(
     if postcheck_result.is_success:
         return ExecutionOutcome(
             category=OutcomeCategory.SUCCESS,
-            code=OutcomeCode.COMPLETED,
+            code=OutcomeCode.CONFIRMED_APPLIED,
             message=(
                 f"Reconciliation successful: Postcheck confirmed effect occurred despite "
                 f"interrupted connection. (Ref: {postcheck_result.audit_ref})"
@@ -35,6 +35,19 @@ def reconcile_commit_execution(
             },
             money_moved=postcheck_result.money_moved,
             audit_ref=postcheck_result.audit_ref,
+            execution_phase=ExecutionPhase.SUBMIT_CONFIRMED,
+        )
+
+    if postcheck_result.code == OutcomeCode.CONFIRMED_NOT_APPLIED:
+        return postcheck_result.model_copy(
+            update={
+                "details": {
+                    **postcheck_result.details,
+                    "safe_to_retry": True,
+                    "original_error": error_message,
+                },
+                "execution_phase": ExecutionPhase.AFTER_SUBMIT_UNKNOWN,
+            }
         )
 
     # Inconclusive: effect status cannot be proven
@@ -46,6 +59,12 @@ def reconcile_commit_execution(
             f"'{error_message}'. Postcheck could not confirm state. Automatic retry is strictly forbidden "
             f"to prevent duplicate money movement. Case requires manual human investigation."
         ),
-        details={"capability_id": capability.id, "inputs": inputs, "original_error": error_message},
+        details={
+            "capability_id": capability.id,
+            "inputs": inputs,
+            "original_error": error_message,
+            "postcheck_code": postcheck_result.code.value,
+        },
         money_moved=False,
+        execution_phase=ExecutionPhase.AFTER_SUBMIT_UNKNOWN,
     )

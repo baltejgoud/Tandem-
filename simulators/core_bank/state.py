@@ -51,6 +51,8 @@ class CoreBankState:
         self.require_compliance_interstitial: bool = False
         self.compliance_cleared: bool = False
         self.simulate_latency_ms: int = 0
+        self.simulate_post_commit_delay_ms: int = 0
+        self.fail_credit_lookup_when_present: bool = False
         self.seed()
 
     def seed(self):
@@ -61,6 +63,8 @@ class CoreBankState:
         self.require_compliance_interstitial = False
         self.compliance_cleared = False
         self.simulate_latency_ms = 0
+        self.simulate_post_commit_delay_ms = 0
+        self.fail_credit_lookup_when_present = False
 
         # Primary test member
         self.members["8830142"] = Member(
