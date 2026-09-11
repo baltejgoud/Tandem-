@@ -116,6 +116,31 @@ class EffectIntentRecord(Base):
     )
 
 
+class EffectClaimRecord(Base):
+    """Atomic, fenced reservation for one immutable external effect."""
+
+    __tablename__ = "effect_claims"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    idempotency_key: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    institution_id: Mapped[str] = mapped_column(String(64), index=True)
+    procedure_id: Mapped[str] = mapped_column(String(64))
+    case_id: Mapped[str] = mapped_column(String(64), index=True)
+    capability_id: Mapped[str] = mapped_column(String(128))
+    member_id: Mapped[str] = mapped_column(String(64))
+    account_id: Mapped[str] = mapped_column(String(64))
+    amount: Mapped[Decimal] = mapped_column(Numeric(24, 2))
+    currency: Mapped[str] = mapped_column(String(3))
+    business_reference: Mapped[str] = mapped_column(String(128), index=True)
+    status: Mapped[str] = mapped_column(String(32), default="CLAIMED", index=True)
+    owner_id: Mapped[str] = mapped_column(String(128))
+    fencing_token: Mapped[int] = mapped_column(Integer, default=1)
+    claimed_at: Mapped[datetime] = mapped_column(DateTime)
+    heartbeat_at: Mapped[datetime] = mapped_column(DateTime)
+    expires_at: Mapped[datetime] = mapped_column(DateTime)
+    updated_at: Mapped[datetime] = mapped_column(DateTime)
+
+
 class EffectEvidenceRecord(Base):
     """Evidence artifacts captured during capability runs (screenshots, DOM snapshots, receipts)."""
 

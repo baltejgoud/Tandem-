@@ -1,23 +1,40 @@
 """Data access repository for procedure ledger operations."""
 
 import json
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
+from datetime import timedelta
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import select
+from sqlalchemy import select, update
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
+from tandem.domain.effects import EffectClaimStatus
+from tandem.domain.identity import EffectIdentity
+from tandem.domain.money import parse_money
+from tandem.domain.outcomes import OutcomeCode
 from tandem.ledger.models import (
     CapabilityExecutionRecord,
     DeadlineRecord,
+    EffectClaimRecord,
     EffectIntentRecord,
     HumanHandoffRecord,
     LeaseRecord,
     ProcedureCaseRecord,
     ProcedureEventRecord,
 )
-from tandem.domain.money import parse_money
+
+
+@dataclass(frozen=True)
+class EffectClaim:
+    """Result of an atomic effect-reservation attempt."""
+
+    acquired: bool
+    status: str
+    fencing_token: int
+    owner_id: str
 
 
 class LedgerRepository:
@@ -195,6 +212,98 @@ class LedgerRepository:
         if intent:
             intent.intent_status = "COMMITTED"
             self.session.flush()
+
+    # -----------------------------------------------------------------------
+    # Atomic Effect Claim
+    # -----------------------------------------------------------------------
+    def claim_effect(
+        self,
+        identity: EffectIdentity,
+        owner_id: str,
+        now: Optional[datetime] = None,
+        ttl: timedelta = timedelta(minutes=5),
+    ) -> EffectClaim:
+        """Atomically reserve one external effect using SQLite's unique constraint."""
+        claim_time = now or datetime.now(timezone.utc)
+        values = {
+            "idempotency_key": identity.idempotency_key,
+            **identity.canonical_payload,
+            "amount": identity.amount,
+            "status": EffectClaimStatus.CLAIMED.value,
+            "owner_id": owner_id,
+            "fencing_token": 1,
+            "claimed_at": claim_time,
+            "heartbeat_at": claim_time,
+            "expires_at": claim_time + ttl,
+            "updated_at": claim_time,
+        }
+        insert_stmt = sqlite_insert(EffectClaimRecord).values(**values)
+        insert_stmt = insert_stmt.on_conflict_do_nothing(index_elements=["idempotency_key"])
+        result = self.session.execute(insert_stmt)
+        self.session.flush()
+
+        record = self.get_effect_claim(identity.idempotency_key)
+        if record is None:
+            raise RuntimeError("Effect claim insert completed without a readable claim")
+        acquired = bool(result.rowcount == 1)
+        return EffectClaim(
+            acquired=acquired,
+            status=record.status if acquired else self._existing_claim_outcome(record.status),
+            fencing_token=record.fencing_token,
+            owner_id=record.owner_id,
+        )
+
+    @staticmethod
+    def _existing_claim_outcome(status: str) -> str:
+        if status == EffectClaimStatus.APPLIED.value:
+            return OutcomeCode.ALREADY_APPLIED.value
+        return OutcomeCode.ALREADY_CLAIMED.value
+
+    def get_effect_claim(self, idempotency_key: str) -> Optional[EffectClaimRecord]:
+        stmt = select(EffectClaimRecord).where(
+            EffectClaimRecord.idempotency_key == idempotency_key
+        )
+        return self.session.scalar(stmt)
+
+    def transition_effect_claim(
+        self,
+        idempotency_key: str,
+        owner_id: str,
+        fencing_token: int,
+        from_statuses: set[EffectClaimStatus],
+        to_status: EffectClaimStatus,
+        now: Optional[datetime] = None,
+    ) -> bool:
+        """Conditionally transition a claim only for its current fenced owner."""
+        transition_time = now or datetime.now(timezone.utc)
+        stmt = (
+            update(EffectClaimRecord)
+            .where(
+                EffectClaimRecord.idempotency_key == idempotency_key,
+                EffectClaimRecord.owner_id == owner_id,
+                EffectClaimRecord.fencing_token == fencing_token,
+                EffectClaimRecord.status.in_([status.value for status in from_statuses]),
+            )
+            .values(status=to_status.value, updated_at=transition_time, heartbeat_at=transition_time)
+        )
+        result = self.session.execute(stmt)
+        self.session.flush()
+        return bool(result.rowcount == 1)
+
+    def validate_effect_token(
+        self,
+        idempotency_key: str,
+        owner_id: str,
+        fencing_token: int,
+    ) -> bool:
+        record = self.get_effect_claim(idempotency_key)
+        return bool(
+            record
+            and record.owner_id == owner_id
+            and record.fencing_token == fencing_token
+            and record.status
+            in {EffectClaimStatus.CLAIMED.value, EffectClaimStatus.APPLYING.value}
+        )
 
     # -----------------------------------------------------------------------
     # Deadlines
