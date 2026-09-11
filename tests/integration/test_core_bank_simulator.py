@@ -48,7 +48,14 @@ def test_precheck_before_and_after_credit():
     # 2. Post provisional credit
     post_resp = client.post(
         "/workspace/credit/commit",
-        data={"member_id": "8830142", "case_id": "D-8842", "amount": 340.00},
+        data={
+            "institution_id": "alpha",
+            "member_id": "8830142",
+            "account_id": "CHK-8830142-01",
+            "case_id": "D-8842",
+            "amount": 340.00,
+            "currency": "USD",
+        },
     )
     assert post_resp.status_code == 200
     assert "PROVISIONAL CREDIT POSTED SUCCESSFULLY" in post_resp.text

@@ -13,6 +13,7 @@ typed CapabilityDefinition YAML artifacts equipped with:
 import hashlib
 from pathlib import Path
 from typing import Optional, Tuple
+
 import yaml
 
 from tandem.discovery.recorder import DiscoveryTrace
@@ -90,8 +91,11 @@ class CapabilityCompiler:
 
         scoped_guard = ScopedGuardSpec(
             container_selector="#credit_action_container, .confirm-panel",
+            expected_institution_template="{{input.institution_id}}",
             expected_member_template="{{input.member_id}}",
+            expected_account_template="{{input.account_id}}",
             expected_amount_template="{{input.amount}}",
+            expected_currency_template="{{input.currency}}",
             expected_case_template="{{input.case_id}}",
         )
 

@@ -55,15 +55,27 @@ class ScopedGuardSpec(BaseModel):
     )
     expected_member_template: str = Field(
         default="{{input.member_id}}",
-        description="Template for expected member/account ID inside container",
+        description="Template for expected submitted member ID",
     )
-    expected_amount_template: Optional[str] = Field(
+    expected_account_template: str = Field(
+        default="{{input.account_id}}",
+        description="Template for expected submitted account ID",
+    )
+    expected_amount_template: str = Field(
         default="{{input.amount}}",
-        description="Template for expected monetary amount inside container",
+        description="Template for expected submitted monetary amount",
     )
-    expected_case_template: Optional[str] = Field(
+    expected_currency_template: str = Field(
+        default="{{input.currency}}",
+        description="Template for expected submitted ISO currency",
+    )
+    expected_case_template: str = Field(
         default="{{input.case_id}}",
-        description="Template for expected case/dispute reference inside container",
+        description="Template for expected submitted case/dispute reference",
+    )
+    expected_institution_template: str = Field(
+        default="{{input.institution_id}}",
+        description="Template for expected submitted institution ID",
     )
 
 
