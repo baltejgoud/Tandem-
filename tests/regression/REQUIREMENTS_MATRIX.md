@@ -5,7 +5,7 @@ This matrix binds each minimum remediation requirement to an executable test. Ex
 | # | Required behavior | Regression evidence |
 |---:|---|---|
 | 1 | Real, provider-directed discovery | `tests/regression/test_remediation_contract.py::test_discovery_contract_requires_real_provider_and_durable_evidence` |
-| 2 | Concurrent duplicate COMMIT | `tests/regression/test_process_safety.py::test_atomic_effect_claim_across_processes` plus `audit_tests/test_adversarial.py::test_two_workers_cannot_both_commit_same_case` |
+| 2 | Concurrent duplicate COMMIT | `tests/regression/test_process_safety.py::test_two_processes_produce_one_target_effect_repeated` plus atomic admission and preserved audit cases |
 | 3 | Unavailable precheck | `audit_tests/test_adversarial.py::test_precheck_outage_is_not_treated_as_effect_absent` |
 | 4 | Unavailable postcheck | `tests/regression/test_remediation_contract.py::test_postcheck_outage_is_explicit_and_never_success` |
 | 5 | Missing guard evidence | `audit_tests/test_adversarial.py::test_guard_fails_closed_when_identity_evidence_is_missing` |
@@ -19,7 +19,7 @@ This matrix binds each minimum remediation requirement to an executable test. Ex
 | 13 | Target service restart | `audit_tests/test_adversarial.py::test_resume_reconciles_external_state_after_simulator_restart` plus durable-store tests below |
 | 14 | Real ambiguous post-submit result | `tests/regression/test_remediation_contract.py::test_after_submit_unknown_is_not_generic_hard_failure` |
 | 15 | Human lease overwrite | `audit_tests/test_adversarial.py::test_active_human_lease_cannot_be_overwritten_by_automation` |
-| 16 | Simultaneous workers | `tests/regression/test_process_safety.py::test_atomic_effect_claim_across_processes` |
+| 16 | Simultaneous workers | `tests/regression/test_process_safety.py::test_two_processes_produce_one_target_effect_repeated` |
 | 17 | Simultaneous human claims | `tests/regression/test_process_safety.py::test_atomic_human_lease_across_processes` |
 | 18 | Stale lease | `tests/regression/test_process_safety.py::test_stale_lease_recovery_fences_old_owner` |
 | 19 | Artifact tampering | Audit selector tamper plus URL/effect/bound cases in `test_remediation_contract.py` |
@@ -34,4 +34,3 @@ This matrix binds each minimum remediation requirement to an executable test. Ex
 | 28 | Wheel install | `tests/regression/test_build_contract.py::test_wheel_contains_runtime_capabilities_and_console_entrypoint` plus clean-room smoke test |
 | 29 | Clean README setup | `tests/regression/test_build_contract.py::test_readme_uses_reproducible_dev_sync` plus clean-room execution |
 | 30 | CI execution | `tests/regression/test_build_contract.py::test_ci_gates_full_verification_surface` plus clean-room workflow-equivalent run |
-
