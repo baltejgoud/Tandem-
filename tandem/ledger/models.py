@@ -43,7 +43,7 @@ class ProcedureCaseRecord(Base):
     )
 
     events: Mapped[list["ProcedureEventRecord"]] = relationship(
-        back_populates="case", cascade="all, delete-orphan", order_by="ProcedureEventRecord.id"
+        back_populates="case", passive_deletes=True, order_by="ProcedureEventRecord.sequence"
     )
     executions: Mapped[list["CapabilityExecutionRecord"]] = relationship(
         back_populates="case", cascade="all, delete-orphan", order_by="CapabilityExecutionRecord.id"
@@ -55,10 +55,14 @@ class ProcedureEventRecord(Base):
 
     __tablename__ = "procedure_events"
 
+    __table_args__ = (UniqueConstraint("case_id", "sequence"),)
+
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    event_id: Mapped[str] = mapped_column(String(36), unique=True, index=True)
     case_id: Mapped[str] = mapped_column(
         String(64), ForeignKey("procedure_cases.case_id"), index=True
     )
+    sequence: Mapped[int] = mapped_column(Integer)
     event_type: Mapped[str] = mapped_column(
         String(64)
     )  # e.g. STEP_STARTED, STEP_COMPLETED, HANDOFF
@@ -68,8 +72,21 @@ class ProcedureEventRecord(Base):
     timestamp: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(timezone.utc), index=True
     )
+    created_at: Mapped[str] = mapped_column(String(40))
+    previous_event_hash: Mapped[str] = mapped_column(String(64))
+    event_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
 
     case: Mapped["ProcedureCaseRecord"] = relationship(back_populates="events")
+
+
+class EventStreamHeadRecord(Base):
+    """Mutable coordination head used to serialize appends to one case stream."""
+
+    __tablename__ = "event_stream_heads"
+
+    case_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    last_sequence: Mapped[int] = mapped_column(Integer, default=0)
+    last_event_hash: Mapped[str] = mapped_column(String(64))
 
 
 class CapabilityExecutionRecord(Base):
