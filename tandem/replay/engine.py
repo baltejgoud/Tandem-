@@ -165,6 +165,15 @@ class EffectEngine:
                 payload={"message": outcome.message},
             )
 
+        elif outcome.category == OutcomeCategory.NEEDS_HUMAN:
+            self.repo.update_case_status(case_id=case_id, status="NEEDS_HUMAN")
+            self.repo.record_event(
+                case_id=case_id,
+                event_type="HUMAN_HANDOFF_REQUIRED",
+                step_name=capability.id,
+                payload={"code": outcome.code.value, "message": outcome.message},
+            )
+
         elif outcome.category == OutcomeCategory.HARD_FAILURE:
             self.repo.update_case_status(case_id=case_id, status="FAILED")
             self.repo.record_event(

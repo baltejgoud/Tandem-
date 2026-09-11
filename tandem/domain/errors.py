@@ -39,3 +39,11 @@ class PageDriftError(TandemError):
 
 class SessionExpiredError(TandemError):
     """Raised when legacy system session has expired."""
+
+
+class ComplianceInterstitialError(TandemError):
+    """Raised when an interstitial compliance screen requires manual operator clearance."""
+
+
+class LeaseConflictError(TandemError):
+    """Raised when a lease is already held by another actor (AUTOMATION vs HUMAN)."""

@@ -181,6 +181,14 @@ class RegEWorkflow:
                 self.transition(case_id, RegEState.NEEDS_HUMAN)
                 return {"status": "POLICY_DENIED", "message": outcome.message}
 
+            if outcome.category == OutcomeCategory.NEEDS_HUMAN:
+                self.transition(case_id, RegEState.NEEDS_HUMAN)
+                return {
+                    "status": "NEEDS_HUMAN",
+                    "code": outcome.code.value,
+                    "message": outcome.message,
+                }
+
             if outcome.category == OutcomeCategory.UNCERTAIN_EFFECT:
                 self.transition(case_id, RegEState.UNCERTAIN_EFFECT)
                 return {

@@ -16,6 +16,7 @@ class OutcomeCategory(str, Enum):
     UNCERTAIN_EFFECT = (
         "UNCERTAIN_EFFECT"  # Effect may have occurred; blind retry strictly forbidden
     )
+    NEEDS_HUMAN = "NEEDS_HUMAN"  # Requires human operator review (interstitial, lease handoff)
 
 
 class OutcomeCode(str, Enum):
@@ -45,6 +46,10 @@ class OutcomeCode(str, Enum):
 
     # UNCERTAIN_EFFECT
     UNCERTAIN_EFFECT = "UNCERTAIN_EFFECT"
+
+    # NEEDS_HUMAN
+    COMPLIANCE_INTERSTITIAL = "COMPLIANCE_INTERSTITIAL"
+    HUMAN_INTERVENTION_REQUIRED = "HUMAN_INTERVENTION_REQUIRED"
 
 
 class ExecutionOutcome(BaseModel):
