@@ -1,10 +1,10 @@
 """Data access repository for procedure ledger operations."""
 
-import json
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
+from uuid import uuid4
 
 from sqlalchemy import select, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
@@ -14,11 +14,18 @@ from tandem.domain.effects import EffectClaimStatus
 from tandem.domain.identity import EffectIdentity
 from tandem.domain.money import parse_money
 from tandem.domain.outcomes import OutcomeCode
+from tandem.ledger.events import (
+    GENESIS_HASH,
+    ChainVerification,
+    canonical_payload,
+    compute_event_hash,
+)
 from tandem.ledger.models import (
     CapabilityExecutionRecord,
     DeadlineRecord,
     EffectClaimRecord,
     EffectIntentRecord,
+    EventStreamHeadRecord,
     HumanHandoffRecord,
     LeaseRecord,
     ObligationRecord,
@@ -72,11 +79,29 @@ class LedgerRepository:
             opened_at=now,
             updated_at=now,
         )
-        self.session.execute(insert_stmt.on_conflict_do_nothing(index_elements=["case_id"]))
+        result = self.session.execute(
+            insert_stmt.on_conflict_do_nothing(index_elements=["case_id"])
+        )
         self.session.flush()
         case = self.get_case(case_id)
         if case is None:
             raise RuntimeError(f"Case {case_id} could not be created or read")
+        if bool(getattr(result, "rowcount", 0) == 1):
+            self.record_event(
+                case_id,
+                "CASE_CREATED",
+                "orchestrator",
+                payload={
+                    "member_id": member_id,
+                    "amount": str(parse_money(amount)),
+                    "currency": currency,
+                    "procedure_name": procedure_name,
+                    "status": "RECEIVED",
+                    "money_moved": False,
+                    "opened_at": now.isoformat(),
+                    "updated_at": now.isoformat(),
+                },
+            )
         return case
 
     def update_case_status(
@@ -103,15 +128,54 @@ class LedgerRepository:
         actor: str = "AUTOMATION",
         payload: Optional[Dict[str, Any]] = None,
     ) -> ProcedureEventRecord:
-        event = ProcedureEventRecord(
+        # The insert-or-ignore is deliberately a write: on SQLite it acquires
+        # the writer lock before the stream head is read, serializing competing
+        # appenders without a SELECT-then-INSERT race.
+        self.session.execute(
+            sqlite_insert(EventStreamHeadRecord)
+            .values(
+                case_id=case_id,
+                last_sequence=0,
+                last_event_hash=GENESIS_HASH,
+            )
+            .on_conflict_do_nothing(index_elements=["case_id"])
+        )
+        head = self.session.get(EventStreamHeadRecord, case_id)
+        if head is None:
+            raise RuntimeError(f"Event stream head for {case_id} was not created")
+        sequence = head.last_sequence + 1
+        previous_hash = head.last_event_hash
+        event_id = str(uuid4())
+        timestamp = datetime.now(timezone.utc)
+        created_at = timestamp.isoformat()
+        serialized_payload = canonical_payload(payload)
+        event_hash = compute_event_hash(
+            event_id=event_id,
             case_id=case_id,
+            sequence=sequence,
             event_type=event_type,
             step_name=step_name,
             actor=actor,
-            payload=json.dumps(payload, default=str, sort_keys=True) if payload else None,
-            timestamp=datetime.now(timezone.utc),
+            payload=serialized_payload,
+            created_at=created_at,
+            previous_event_hash=previous_hash,
+        )
+        event = ProcedureEventRecord(
+            event_id=event_id,
+            case_id=case_id,
+            sequence=sequence,
+            event_type=event_type,
+            step_name=step_name,
+            actor=actor,
+            payload=serialized_payload,
+            timestamp=timestamp,
+            created_at=created_at,
+            previous_event_hash=previous_hash,
+            event_hash=event_hash,
         )
         self.session.add(event)
+        head.last_sequence = sequence
+        head.last_event_hash = event_hash
         self.session.flush()
         return event
 
@@ -119,9 +183,41 @@ class LedgerRepository:
         stmt = (
             select(ProcedureEventRecord)
             .where(ProcedureEventRecord.case_id == case_id)
-            .order_by(ProcedureEventRecord.id.asc())
+            .order_by(ProcedureEventRecord.sequence.asc())
         )
         return list(self.session.scalars(stmt).all())
+
+    def verify_event_chain(self, case_id: str) -> ChainVerification:
+        """Recompute and verify sequence continuity and every chained digest."""
+        previous_hash = GENESIS_HASH
+        expected_sequence = 1
+        for event in self.get_events_for_case(case_id):
+            if event.sequence != expected_sequence or event.previous_event_hash != previous_hash:
+                return ChainVerification(
+                    valid=False,
+                    broken_sequence=expected_sequence,
+                    message="Event sequence or previous hash is discontinuous",
+                )
+            computed = compute_event_hash(
+                event_id=event.event_id,
+                case_id=event.case_id,
+                sequence=event.sequence,
+                event_type=event.event_type,
+                step_name=event.step_name,
+                actor=event.actor,
+                payload=event.payload,
+                created_at=event.created_at,
+                previous_event_hash=event.previous_event_hash,
+            )
+            if computed != event.event_hash:
+                return ChainVerification(
+                    valid=False,
+                    broken_sequence=event.sequence,
+                    message="Event digest does not match its immutable content",
+                )
+            previous_hash = event.event_hash
+            expected_sequence += 1
+        return ChainVerification(valid=True)
 
     # -----------------------------------------------------------------------
     # Capability Execution Tracking
