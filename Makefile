@@ -11,7 +11,13 @@ seed:
 	uv run python scripts/seed.py
 
 dev:
-	uv run python -m tandem.api.app
+	uv run python scripts/start_services.py
+
+docker-build:
+	docker build -t tandem-system .
+
+docker-up:
+	docker compose up --build
 
 test:
 	uv run pytest tests/ -v
