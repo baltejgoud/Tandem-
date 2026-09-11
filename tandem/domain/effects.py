@@ -17,6 +17,17 @@ class EffectClass(str, Enum):
     COMMIT = "COMMIT"  # Irreversible or materially consequential (moves money, files legal claim)
 
 
+class EffectClaimStatus(str, Enum):
+    """Durable lifecycle for an irreversible external effect."""
+
+    CLAIMED = "CLAIMED"
+    APPLYING = "APPLYING"
+    APPLIED = "APPLIED"
+    UNCERTAIN = "UNCERTAIN"
+    FAILED_RETRYABLE = "FAILED_RETRYABLE"
+    FAILED_PERMANENT = "FAILED_PERMANENT"
+
+
 class PrecheckSpec(BaseModel):
     """Specification for inspecting whether a declared effect has already occurred."""
 

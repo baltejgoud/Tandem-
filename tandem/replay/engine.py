@@ -1,12 +1,14 @@
-"""Effect-aware capability execution engine implementing the 14-step commit protocol."""
+"""Effect-aware capability execution engine with atomic COMMIT admission."""
 
+import os
 from typing import Any, Dict, Optional
+from uuid import uuid4
 
 from playwright.sync_api import Page
 from sqlalchemy.orm import Session
 
 from tandem.domain.capability import CapabilityDefinition
-from tandem.domain.effects import EffectClass
+from tandem.domain.effects import EffectClaimStatus, EffectClass
 from tandem.domain.outcomes import ExecutionOutcome, OutcomeCategory, OutcomeCode
 from tandem.domain.identity import EffectIdentity
 from tandem.domain.money import parse_money
@@ -27,6 +29,7 @@ class EffectEngine:
         self.overlay = overlay
         self.repo = LedgerRepository(session)
         self.executor = DeterministicExecutor(page=page, overlay=overlay)
+        self.owner_id = f"AUTOMATION:{os.getpid()}:{uuid4().hex}"
 
     def execute_capability(
         self, capability: CapabilityDefinition, inputs: Dict[str, Any]
@@ -101,8 +104,45 @@ class EffectEngine:
         if not idempotency_key and capability.effect.idempotency_key:
             idempotency_key = render_template(capability.effect.idempotency_key, {"input": inputs})
 
+        claim = None
+        if capability.effect.effect_class == EffectClass.COMMIT:
+            if identity is None or idempotency_key is None:
+                raise RuntimeError("COMMIT execution reached admission without an effect identity")
+            claim = self.repo.claim_effect(identity, self.owner_id)
+            self.repo.record_event(
+                case_id=case_id,
+                event_type="EFFECT_CLAIMED" if claim.acquired else "EFFECT_CLAIM_REJECTED",
+                step_name=capability.id,
+                payload={
+                    "idempotency_key": idempotency_key,
+                    "owner_id": claim.owner_id,
+                    "fencing_token": claim.fencing_token,
+                    "status": claim.status,
+                },
+            )
+            self.session.commit()
+            if not claim.acquired:
+                code = OutcomeCode(claim.status)
+                if code == OutcomeCode.ALREADY_APPLIED:
+                    confirmed = execute_precheck(capability, inputs)
+                    if confirmed and confirmed.code == OutcomeCode.ALREADY_APPLIED:
+                        return confirmed
+                return ExecutionOutcome(
+                    category=OutcomeCategory.BUSINESS_OUTCOME,
+                    code=code,
+                    message=(
+                        f"Effect admission rejected for '{capability.id}': {claim.status}. "
+                        "This worker did not reach the external mutation."
+                    ),
+                    details={
+                        "idempotency_key": idempotency_key,
+                        "fencing_token": claim.fencing_token,
+                    },
+                    money_moved=False,
+                )
+
         # -------------------------------------------------------------------
-        # 3. Precheck (Prevents double execution before touching the browser)
+        # 3. Positive target precheck while holding the durable effect claim
         # -------------------------------------------------------------------
         if capability.effect.effect_class == EffectClass.COMMIT:
             precheck_outcome = execute_precheck(capability, inputs)
@@ -130,19 +170,31 @@ class EffectEngine:
                     audit_ref=precheck_outcome.audit_ref,
                     money_moved=False,
                 )
+                if claim and idempotency_key:
+                    self.repo.transition_effect_claim(
+                        idempotency_key,
+                        self.owner_id,
+                        claim.fencing_token,
+                        {EffectClaimStatus.CLAIMED},
+                        EffectClaimStatus.APPLIED,
+                    )
                 self.session.commit()
                 return precheck_outcome
 
         # -------------------------------------------------------------------
-        # 4. Acquire Single-Owner Lease & Write Staged Intent
+        # 4. Acquire browser-session lease and durably enter APPLYING
         # -------------------------------------------------------------------
         self.repo.acquire_lease(case_id=case_id, owner="AUTOMATION")
-        if idempotency_key:
-            self.repo.stage_intent(
-                case_id=case_id,
-                idempotency_key=idempotency_key,
-                capability_id=capability.id,
+        if claim and idempotency_key:
+            transitioned = self.repo.transition_effect_claim(
+                idempotency_key,
+                self.owner_id,
+                claim.fencing_token,
+                {EffectClaimStatus.CLAIMED},
+                EffectClaimStatus.APPLYING,
             )
+            if not transitioned:
+                raise RuntimeError("Effect claim fencing token became stale before APPLYING")
 
         exec_record = self.repo.start_execution(
             case_id=case_id,
@@ -227,8 +279,24 @@ class EffectEngine:
                 payload={"code": outcome.code.value, "message": outcome.message},
             )
 
-        if idempotency_key and outcome.is_success:
-            self.repo.mark_intent_committed(idempotency_key)
+        if claim and idempotency_key:
+            if outcome.is_success:
+                target_status = EffectClaimStatus.APPLIED
+            elif outcome.category == OutcomeCategory.UNCERTAIN_EFFECT:
+                target_status = EffectClaimStatus.UNCERTAIN
+            elif outcome.category == OutcomeCategory.RECOVERABLE_FAILURE:
+                target_status = EffectClaimStatus.FAILED_RETRYABLE
+            else:
+                target_status = EffectClaimStatus.FAILED_PERMANENT
+            transitioned = self.repo.transition_effect_claim(
+                idempotency_key,
+                self.owner_id,
+                claim.fencing_token,
+                {EffectClaimStatus.APPLYING},
+                target_status,
+            )
+            if not transitioned:
+                raise RuntimeError("Effect claim fencing token became stale before settlement")
 
         self.repo.release_lease(case_id=case_id)
         self.session.commit()
