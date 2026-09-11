@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from tandem.domain.capability import CapabilityDefinition
 from tandem.domain.effects import EffectClass
 from tandem.domain.outcomes import ExecutionOutcome, OutcomeCategory, OutcomeCode
+from tandem.domain.identity import EffectIdentity
 from tandem.domain.money import parse_money
 from tandem.ledger.repository import LedgerRepository
 from tandem.policy.engine import PolicyEngine
@@ -31,12 +32,54 @@ class EffectEngine:
         self, capability: CapabilityDefinition, inputs: Dict[str, Any]
     ) -> ExecutionOutcome:
         """Execute a capability according to its declared effect class."""
-        case_id = inputs.get("case_id", "UNKNOWN_CASE")
-        member_id = inputs.get("member_id", "UNKNOWN_MEMBER")
+        inputs = dict(inputs)
+        case_id = str(inputs.get("case_id", "UNKNOWN_CASE"))
+        member_id = str(inputs.get("member_id", "UNKNOWN_MEMBER"))
         amount = parse_money(inputs.get("amount", "0.00"))
+        inputs["amount"] = amount
+        inputs.setdefault("institution_id", self.overlay.institution_id if self.overlay else "alpha")
+        inputs.setdefault("currency", capability.effect.bounds.currency if capability.effect.bounds else "USD")
+
+        if capability.effect.effect_class == EffectClass.COMMIT and not inputs.get("account_id"):
+            if capability.system != "core_bank":
+                return ExecutionOutcome(
+                    category=OutcomeCategory.HARD_FAILURE,
+                    code=OutcomeCode.ENTITY_BINDING_MISMATCH,
+                    message="Complete effect identity requires account_id before COMMIT",
+                    money_moved=False,
+                )
+            try:
+                import httpx
+
+                from tandem.config import settings
+
+                response = httpx.get(f"{settings.core_bank_url}/api/member/{member_id}", timeout=3.0)
+                response.raise_for_status()
+                member_data = response.json()
+                if str(member_data.get("member_id", "")) != member_id:
+                    raise ValueError("member identity response mismatch")
+                inputs["account_id"] = str(member_data["account_id"])
+            except Exception as exc:
+                return ExecutionOutcome(
+                    category=OutcomeCategory.HARD_FAILURE,
+                    code=OutcomeCode.PRECHECK_UNAVAILABLE,
+                    message=f"Unable to establish complete effect identity: {exc}",
+                    money_moved=False,
+                )
+
+        identity = (
+            EffectIdentity.from_capability(capability, inputs)
+            if capability.effect.effect_class == EffectClass.COMMIT
+            else None
+        )
 
         # Ensure case exists in ledger
-        self.repo.create_or_get_case(case_id=case_id, member_id=member_id, amount=amount)
+        self.repo.create_or_get_case(
+            case_id=case_id,
+            member_id=member_id,
+            amount=amount,
+            currency=str(inputs.get("currency", "USD")),
+        )
 
         # -------------------------------------------------------------------
         # 1. Policy Evaluation
@@ -54,8 +97,8 @@ class EffectEngine:
         # -------------------------------------------------------------------
         # 2. Idempotency Key Computation
         # -------------------------------------------------------------------
-        idempotency_key = None
-        if capability.effect.idempotency_key:
+        idempotency_key = identity.idempotency_key if identity else None
+        if not idempotency_key and capability.effect.idempotency_key:
             idempotency_key = render_template(capability.effect.idempotency_key, {"input": inputs})
 
         # -------------------------------------------------------------------

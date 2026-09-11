@@ -24,6 +24,7 @@ from tandem.domain.capability import (
 from tandem.domain.effects import (
     BoundsSpec,
     EffectClass,
+    EffectIdentitySpec,
     EffectSpec,
     PostcheckSpec,
     PrecheckSpec,
@@ -62,6 +63,17 @@ class CapabilityCompiler:
         effect_spec = EffectSpec(
             effect_class=EffectClass.COMMIT if trace.money_moved else EffectClass.READ,
             idempotency_key="regE:{{input.case_id}}:provisional_credit",
+            identity=EffectIdentitySpec(
+                institution_id="{{input.institution_id}}",
+                procedure_id="reg_e_dispute",
+                case_id="{{input.case_id}}",
+                capability_id=trace.capability_id,
+                member_id="{{input.member_id}}",
+                account_id="{{input.account_id}}",
+                amount="{{input.amount}}",
+                currency="{{input.currency}}",
+                business_reference="{{input.case_id}}",
+            ),
             precheck=PrecheckSpec(
                 capability="core.find_memo_by_case",
                 params={"case_id": "{{input.case_id}}"},
@@ -87,10 +99,20 @@ class CapabilityCompiler:
             "type": "object",
             "properties": {
                 "member_id": {"type": "string"},
+                "account_id": {"type": "string"},
                 "case_id": {"type": "string"},
                 "amount": {"type": "number"},
+                "currency": {"type": "string", "const": "USD"},
+                "institution_id": {"type": "string"},
             },
-            "required": ["member_id", "case_id", "amount"],
+            "required": [
+                "institution_id",
+                "member_id",
+                "account_id",
+                "case_id",
+                "amount",
+                "currency",
+            ],
         }
 
         # Build definition

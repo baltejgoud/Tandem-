@@ -13,7 +13,14 @@ from tandem.domain.capability import (
     StepDefinition,
     load_capability_from_yaml,
 )
-from tandem.domain.effects import BoundsSpec, EffectClass, EffectSpec, PostcheckSpec, PrecheckSpec
+from tandem.domain.effects import (
+    BoundsSpec,
+    EffectClass,
+    EffectIdentitySpec,
+    EffectSpec,
+    PostcheckSpec,
+    PrecheckSpec,
+)
 from tandem.domain.errors import EntityBindingMismatchError
 from tandem.domain.outcomes import OutcomeCategory, OutcomeCode
 from tandem.ledger.database import get_engine, get_session_factory, init_db
@@ -118,6 +125,17 @@ def test_control_scoped_guard_detects_transposed_member_in_container():
         effect=EffectSpec(
             effect_class=EffectClass.COMMIT,
             idempotency_key="test:{{input.case_id}}",
+            identity=EffectIdentitySpec(
+                institution_id="alpha",
+                procedure_id="reg_e_dispute",
+                case_id="{{input.case_id}}",
+                capability_id="core.test_commit",
+                member_id="{{input.member_id}}",
+                account_id="CHK-8830142-01",
+                amount="{{input.amount}}",
+                currency="USD",
+                business_reference="{{input.case_id}}",
+            ),
             precheck=PrecheckSpec(capability="core.find"),
             postcheck=PostcheckSpec(capability="core.find"),
             bounds=BoundsSpec(max_amount=500.0),
@@ -167,6 +185,17 @@ def test_executor_halts_on_transposed_member():
         effect=EffectSpec(
             effect_class=EffectClass.COMMIT,
             idempotency_key="test:{{input.case_id}}",
+            identity=EffectIdentitySpec(
+                institution_id="alpha",
+                procedure_id="reg_e_dispute",
+                case_id="{{input.case_id}}",
+                capability_id="core.test_transposed_replay",
+                member_id="{{input.member_id}}",
+                account_id="CHK-8830142-01",
+                amount="{{input.amount}}",
+                currency="USD",
+                business_reference="{{input.case_id}}",
+            ),
             precheck=PrecheckSpec(capability="core.find"),
             postcheck=PostcheckSpec(capability="core.find"),
             bounds=BoundsSpec(max_amount=500.0),

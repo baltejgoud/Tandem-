@@ -9,7 +9,14 @@ from tandem.domain.capability import (
     StepAction,
     StepDefinition,
 )
-from tandem.domain.effects import BoundsSpec, EffectClass, EffectSpec, PostcheckSpec, PrecheckSpec
+from tandem.domain.effects import (
+    BoundsSpec,
+    EffectClass,
+    EffectIdentitySpec,
+    EffectSpec,
+    PostcheckSpec,
+    PrecheckSpec,
+)
 from tandem.domain.outcomes import ExecutionOutcome, OutcomeCategory, OutcomeCode
 
 
@@ -66,6 +73,17 @@ def test_commit_without_postcheck_rejected():
             effect=EffectSpec(
                 effect_class=EffectClass.COMMIT,
                 idempotency_key="regE:{{case_id}}:credit",
+                identity=EffectIdentitySpec(
+                    institution_id="{{input.institution_id}}",
+                    procedure_id="reg_e_dispute",
+                    case_id="{{input.case_id}}",
+                    capability_id="core.test",
+                    member_id="{{input.member_id}}",
+                    account_id="{{input.account_id}}",
+                    amount="{{input.amount}}",
+                    currency="{{input.currency}}",
+                    business_reference="{{input.case_id}}",
+                ),
                 precheck=PrecheckSpec(capability="core.find_memo"),
                 bounds=BoundsSpec(max_amount=500.0, currency="USD"),
             ),
@@ -104,6 +122,17 @@ def test_commit_without_scoped_guard_rejected():
             effect=EffectSpec(
                 effect_class=EffectClass.COMMIT,
                 idempotency_key="regE:{{case_id}}:credit",
+                identity=EffectIdentitySpec(
+                    institution_id="{{input.institution_id}}",
+                    procedure_id="reg_e_dispute",
+                    case_id="{{input.case_id}}",
+                    capability_id="core.test",
+                    member_id="{{input.member_id}}",
+                    account_id="{{input.account_id}}",
+                    amount="{{input.amount}}",
+                    currency="{{input.currency}}",
+                    business_reference="{{input.case_id}}",
+                ),
                 precheck=PrecheckSpec(capability="core.find_memo"),
                 postcheck=PostcheckSpec(capability="core.read_memo"),
                 bounds=BoundsSpec(max_amount=500.0, currency="USD"),
@@ -124,6 +153,17 @@ def test_valid_commit_capability_accepted_and_hashed():
         effect=EffectSpec(
             effect_class=EffectClass.COMMIT,
             idempotency_key="regE:{{case_id}}:provisional_credit",
+            identity=EffectIdentitySpec(
+                institution_id="{{input.institution_id}}",
+                procedure_id="reg_e_dispute",
+                case_id="{{input.case_id}}",
+                capability_id="core.post_provisional_credit",
+                member_id="{{input.member_id}}",
+                account_id="{{input.account_id}}",
+                amount="{{input.amount}}",
+                currency="{{input.currency}}",
+                business_reference="{{input.case_id}}",
+            ),
             precheck=PrecheckSpec(
                 capability="core.find_memo_by_case",
                 params={"case_id": "{{input.case_id}}"},
