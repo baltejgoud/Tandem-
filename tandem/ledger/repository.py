@@ -21,6 +21,7 @@ from tandem.ledger.models import (
     EffectIntentRecord,
     HumanHandoffRecord,
     LeaseRecord,
+    ObligationRecord,
     ProcedureCaseRecord,
     ProcedureEventRecord,
 )
@@ -245,6 +246,40 @@ class LedgerRepository:
         if record is None:
             raise RuntimeError("Effect claim insert completed without a readable claim")
         acquired = bool(getattr(result, "rowcount", 0) == 1)
+        if not acquired and record.status == EffectClaimStatus.FAILED_RETRYABLE.value:
+            reclaim = (
+                update(EffectClaimRecord)
+                .where(
+                    EffectClaimRecord.idempotency_key == identity.idempotency_key,
+                    EffectClaimRecord.status == EffectClaimStatus.FAILED_RETRYABLE.value,
+                    EffectClaimRecord.fencing_token == record.fencing_token,
+                )
+                .values(
+                    status=EffectClaimStatus.CLAIMED.value,
+                    owner_id=owner_id,
+                    fencing_token=record.fencing_token + 1,
+                    claimed_at=claim_time,
+                    heartbeat_at=claim_time,
+                    expires_at=claim_time + ttl,
+                    updated_at=claim_time,
+                )
+            )
+            reclaim_result = self.session.execute(reclaim)
+            acquired = bool(getattr(reclaim_result, "rowcount", 0) == 1)
+            if acquired:
+                self.session.expire(record)
+                self.session.refresh(record)
+        if acquired and self.get_case(identity.case_id) is not None:
+            self.record_event(
+                identity.case_id,
+                "EFFECT_CLAIMED",
+                identity.capability_id,
+                payload={
+                    "idempotency_key": identity.idempotency_key,
+                    "owner_id": owner_id,
+                    "fencing_token": record.fencing_token,
+                },
+            )
         return EffectClaim(
             acquired=acquired,
             status=record.status if acquired else self._existing_claim_outcome(record.status),
@@ -316,6 +351,14 @@ class LedgerRepository:
     # Deadlines
     # -----------------------------------------------------------------------
     def create_deadline(self, case_id: str, deadline_type: str, due_at: datetime) -> DeadlineRecord:
+        existing = self.session.scalar(
+            select(DeadlineRecord).where(
+                DeadlineRecord.case_id == case_id,
+                DeadlineRecord.deadline_type == deadline_type,
+            )
+        )
+        if existing:
+            return existing
         record = DeadlineRecord(
             case_id=case_id,
             deadline_type=deadline_type,
@@ -342,6 +385,82 @@ class LedgerRepository:
     def get_deadlines_for_case(self, case_id: str) -> List[DeadlineRecord]:
         stmt = select(DeadlineRecord).where(DeadlineRecord.case_id == case_id)
         return list(self.session.scalars(stmt).all())
+
+    # -----------------------------------------------------------------------
+    # Durable Regulatory Obligations
+    # -----------------------------------------------------------------------
+    def create_obligation(
+        self, case_id: str, obligation_type: str, due_at: datetime
+    ) -> ObligationRecord:
+        existing = self.session.scalar(
+            select(ObligationRecord).where(
+                ObligationRecord.case_id == case_id,
+                ObligationRecord.obligation_type == obligation_type,
+            )
+        )
+        if existing:
+            return existing
+        obligation = ObligationRecord(
+            case_id=case_id,
+            obligation_type=obligation_type,
+            due_at=due_at,
+            status="PLANNED",
+        )
+        self.session.add(obligation)
+        self.session.flush()
+        self.record_event(
+            case_id,
+            "OBLIGATION_CREATED",
+            "orchestrator",
+            payload={"obligation_type": obligation_type, "due_at": due_at.isoformat()},
+        )
+        return obligation
+
+    def get_obligations_for_case(self, case_id: str) -> List[ObligationRecord]:
+        stmt = (
+            select(ObligationRecord)
+            .where(ObligationRecord.case_id == case_id)
+            .order_by(ObligationRecord.id.asc())
+        )
+        return list(self.session.scalars(stmt).all())
+
+    def activate_obligation(self, case_id: str, obligation_type: str) -> ObligationRecord:
+        obligation = self._get_obligation(case_id, obligation_type)
+        if obligation.status == "PLANNED":
+            obligation.status = "ACTIVE"
+            obligation.activated_at = datetime.now(timezone.utc)
+            self.record_event(
+                case_id,
+                "OBLIGATION_ACTIVATED",
+                "orchestrator",
+                payload={"obligation_type": obligation_type},
+            )
+        self.session.flush()
+        return obligation
+
+    def satisfy_obligation(self, case_id: str, obligation_type: str) -> ObligationRecord:
+        obligation = self._get_obligation(case_id, obligation_type)
+        obligation.status = "SATISFIED"
+        obligation.satisfied_at = datetime.now(timezone.utc)
+        self.record_event(
+            case_id,
+            "OBLIGATION_SATISFIED",
+            "orchestrator",
+            payload={"obligation_type": obligation_type},
+        )
+        self.session.flush()
+        return obligation
+
+    def _get_obligation(self, case_id: str, obligation_type: str) -> ObligationRecord:
+        obligation = self.session.scalar(
+            select(ObligationRecord).where(
+                ObligationRecord.case_id == case_id,
+                ObligationRecord.obligation_type == obligation_type,
+            )
+        )
+        if obligation is None:
+            raise ValueError(f"Missing obligation {obligation_type} for case {case_id}")
+        return obligation
 
     # -----------------------------------------------------------------------
     # Single-Owner Lease (AUTOMATION vs HUMAN)
