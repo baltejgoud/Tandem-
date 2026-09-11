@@ -7,6 +7,7 @@ from playwright.sync_api import Page
 from tandem.domain.capability import CapabilityDefinition, StepAction
 from tandem.domain.errors import (
     AmountMismatchError,
+    ComplianceInterstitialError,
     EntityBindingMismatchError,
     PageDriftError,
     SessionExpiredError,
@@ -48,6 +49,21 @@ class DeterministicExecutor:
                 raise SessionExpiredError("Target system session has timed out")
 
             for step in capability.steps:
+                # Check for compliance review interstitial
+                try:
+                    ctx = self.surface._get_context(frame_selector)
+                    if (
+                        ctx.locator("#compliance_interstitial_panel").count() > 0
+                        or "COMPLIANCE INTERSTITIAL REVIEW REQUIRED" in (self.page.content() or "")
+                    ):
+                        raise ComplianceInterstitialError(
+                            "Compliance review interstitial encountered; manual operator sign-off required"
+                        )
+                except ComplianceInterstitialError:
+                    raise
+                except Exception:
+                    pass
+
                 # 1. Container-scoped guard check immediately prior to or during commit actions
                 if step.action == StepAction.ASSERT_CONTAINER or (
                     step.semantic_target == "Commit Button" and capability.scoped_guard
@@ -187,6 +203,15 @@ class DeterministicExecutor:
                 code=OutcomeCode.PAGE_DRIFT,
                 message=str(e),
                 details={"drift_events": self.surface.drift_events},
+                money_moved=False,
+            )
+
+        except ComplianceInterstitialError as e:
+            return ExecutionOutcome(
+                category=OutcomeCategory.NEEDS_HUMAN,
+                code=OutcomeCode.COMPLIANCE_INTERSTITIAL,
+                message=str(e),
+                details={"interstitial_type": "REG_E_COMPLIANCE_REVIEW"},
                 money_moved=False,
             )
 
