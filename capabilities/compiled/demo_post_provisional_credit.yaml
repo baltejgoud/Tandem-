@@ -1,0 +1,119 @@
+# Compiled by Tandem CapabilityCompiler
+# SHA-256: 265b07bdef4dc98c1ec3add7f39266ce948f377b38187e96eba8e15fe71b7c88
+
+id: core.post_provisional_credit
+version: 1.0.0
+name: Post Provisional Credit
+description: Navigate hostile core banking portal, verify member, and commit provisional
+  credit.
+system: core_bank
+effect:
+  class: COMMIT
+  idempotency_key: regE:{{input.case_id}}:provisional_credit
+  precheck:
+    capability: core.find_memo_by_case
+    params:
+      case_id: '{{input.case_id}}'
+    if_found: ALREADY_APPLIED
+  postcheck:
+    capability: core.find_memo_by_case
+    params:
+      case_id: '{{input.case_id}}'
+    expected_status: CONFIRMED
+  reconciliation:
+    strategy: POSTCHECK_OR_UNCERTAIN
+    max_inquiry_attempts: 2
+  compensation: core.reverse_provisional_credit
+  bounds:
+    max_amount: 500.0
+    currency: USD
+input_schema:
+  type: object
+  properties:
+    member_id:
+      type: string
+    case_id:
+      type: string
+    amount:
+      type: number
+  required:
+  - member_id
+  - case_id
+  - amount
+output_schema: {}
+scoped_guard:
+  container_selector: '#credit_action_container, .confirm-panel'
+  expected_member_template: '{{input.member_id}}'
+  expected_amount_template: '{{input.amount}}'
+  expected_case_template: '{{input.case_id}}'
+steps:
+- step_id: step_1_nav
+  action: NAVIGATE
+  semantic_target: http://127.0.0.1:8001
+  locator_candidates: []
+  input_value_template: null
+  expected_text: null
+  frame_selector: null
+- step_id: step_2_fill_member_id
+  action: FILL
+  semantic_target: Member Search Input
+  locator_candidates:
+  - input[name='q']
+  - '#search_input'
+  input_value_template: '{{input.member_id}}'
+  expected_text: null
+  frame_selector: '#core_workspace_frame'
+- step_id: step_3_click
+  action: CLICK
+  semantic_target: Search Button
+  locator_candidates:
+  - button[type='submit']
+  - '#search_btn'
+  input_value_template: null
+  expected_text: null
+  frame_selector: '#core_workspace_frame'
+- step_id: step_4_click
+  action: CLICK
+  semantic_target: Post Provisional Credit Link
+  locator_candidates:
+  - a.action-credit-btn
+  - text=Post Provisional Credit
+  input_value_template: null
+  expected_text: null
+  frame_selector: '#core_workspace_frame'
+- step_id: step_5_fill_case_id
+  action: FILL
+  semantic_target: Case ID Field
+  locator_candidates:
+  - input[name='case_id']
+  input_value_template: '{{input.case_id}}'
+  expected_text: null
+  frame_selector: '#core_workspace_frame'
+- step_id: step_6_fill_amount
+  action: FILL
+  semantic_target: Amount Field
+  locator_candidates:
+  - input[name='amount']
+  input_value_template: '{{input.amount}}'
+  expected_text: null
+  frame_selector: '#core_workspace_frame'
+- step_id: step_7_click
+  action: CLICK
+  semantic_target: Proceed to Confirmation
+  locator_candidates:
+  - button.btn-proceed
+  - text=Review & Continue >>
+  input_value_template: null
+  expected_text: null
+  frame_selector: '#core_workspace_frame'
+- step_id: step_8_click
+  action: CLICK
+  semantic_target: Commit Button
+  locator_candidates:
+  - button.btn-commit-final
+  - '#btn_commit_credit'
+  - text=POST PROVISIONAL CREDIT NOW
+  input_value_template: null
+  expected_text: null
+  frame_selector: '#core_workspace_frame'
+source_discovery_run_id: null
