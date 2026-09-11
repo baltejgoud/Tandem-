@@ -48,7 +48,9 @@ def test_deterministic_replay_posts_credit_with_zero_llm_calls():
         browser.close()
 
     # 4. Verify outcomes and strict invariants
-    assert outcome.category == OutcomeCategory.SUCCESS
+    assert (
+        outcome.category == OutcomeCategory.SUCCESS
+    ), f"Replay failed: code={outcome.code}, message={outcome.message}, details={outcome.details}"
     assert outcome.code == OutcomeCode.COMPLETED
     assert outcome.money_moved is True
     assert outcome.audit_ref is not None

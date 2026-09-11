@@ -42,3 +42,21 @@ def ensure_simulators_running() -> None:
     start_server_in_thread(core_bank_app, 8001)
     start_server_in_thread(proc_app, 8003)
     start_server_in_thread(docs_app, 8004)
+
+
+def reset_all_simulators() -> None:
+    """Reset state across all three simulators via their API endpoints and python state."""
+    from simulators.core_bank.state import core_bank_state
+    from simulators.documents.state import document_state
+    from simulators.processor.state import processor_state
+    from tandem.config import settings
+
+    core_bank_state.seed()
+    processor_state.reset()
+    document_state.reset()
+
+    for url in [settings.core_bank_url, settings.processor_url, settings.documents_url]:
+        try:
+            httpx.post(f"{url}/api/reset", timeout=1.0)
+        except Exception:
+            pass
