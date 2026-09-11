@@ -14,7 +14,7 @@ This matrix binds each minimum remediation requirement to an executable test. Ex
 | 8 | Wrong member | `tests/integration/test_effect_protocol.py::test_control_scoped_guard_detects_transposed_member_in_container` |
 | 9 | Wrong account | `tests/regression/test_remediation_contract.py::test_guard_contract_requires_account_binding` |
 | 10 | Wrong currency | `tests/regression/test_remediation_contract.py::test_guard_contract_requires_currency_binding` |
-| 11 | Process death around COMMIT | `tests/regression/test_process_safety.py::test_obligation_is_durable_before_effect_claim` and the Phase 13 crash matrix |
+| 11 | Process death around COMMIT | `tests/regression/test_process_safety.py::test_obligation_is_durable_before_effect_claim` and `tests/regression/test_crash_matrix.py` (17 rows across core, processor, and notice COMMITs) |
 | 12 | Process death around deadline creation | `tests/regression/test_process_safety.py::test_obligation_is_durable_before_effect_claim` and the Phase 13 crash matrix |
 | 13 | Target service restart | `audit_tests/test_adversarial.py::test_resume_reconciles_external_state_after_simulator_restart` plus durable-store tests below |
 | 14 | Real ambiguous post-submit result | `tests/regression/test_remediation_contract.py::test_after_submit_unknown_is_not_generic_hard_failure` |
@@ -27,8 +27,8 @@ This matrix binds each minimum remediation requirement to an executable test. Ex
 | 21 | Invalid COMMIT artifact | Audit empty-COMMIT test plus `test_commit_contract_requires_structural_guard_and_reconciliation` |
 | 22 | Second-institution reuse | `tests/regression/test_remediation_contract.py::test_institution_routing_is_not_embedded_in_immutable_artifact` and Phase 25 E2E |
 | 23 | Zero-model replay | `tests/e2e/test_compiled_artifact_replay.py::test_discovery_compilation_and_zero_llm_replay` and Phase 22 provider-network block |
-| 24 | Processor duplicate effect | `tests/regression/test_target_persistence.py::test_processor_effect_is_durable_and_idempotent` |
-| 25 | Notice duplicate effect | `tests/regression/test_target_persistence.py::test_notice_effect_is_durable_and_idempotent` |
+| 24 | Processor duplicate effect | `tests/regression/test_target_persistence.py::test_processor_effect_is_durable_and_idempotent` plus `tests/regression/test_effect_protocol_unification.py` (serial duplicate, two-process race, crash rows P-R) |
+| 25 | Notice duplicate effect | `tests/regression/test_target_persistence.py::test_notice_effect_is_durable_and_idempotent` plus `tests/regression/test_effect_protocol_unification.py` (serial duplicate, confirmed-absent retry, crash rows L-N) |
 | 26 | NaN / Infinity amount | Audit NaN test plus finite-value matrix in `test_remediation_contract.py` |
 | 27 | Deadline month/year/weekend/holiday behavior | `tests/regression/test_deadline_rules.py` |
 | 28 | Wheel install | `tests/regression/test_build_contract.py::test_wheel_contains_runtime_capabilities_and_console_entrypoint` plus clean-room smoke test |

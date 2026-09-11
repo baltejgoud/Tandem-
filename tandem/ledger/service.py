@@ -61,7 +61,12 @@ class LedgerService:
         requires_human = False
 
         for exc in executions:
-            if exc.status in ("SUCCESS", "COMPLETED", "ALREADY_APPLIED"):
+            if exc.status in (
+                "SUCCESS",
+                "COMPLETED",
+                "CONFIRMED_APPLIED",
+                "ALREADY_APPLIED",
+            ):
                 completed_caps.append(exc.capability_id)
                 successful_execs.append(exc)
                 if exc.money_moved:

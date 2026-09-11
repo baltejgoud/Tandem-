@@ -31,16 +31,33 @@ def reconcile_applied_effects(
 def _reconcile_claim(
     repo: LedgerRepository, claim: EffectClaimRecord
 ) -> Optional[ExecutionOutcome]:
-    if claim.capability_id != "core.post_provisional_credit":
+    adapters = {
+        "core.post_provisional_credit": (
+            f"{settings.core_bank_url}/api/credits/{claim.business_reference}",
+            "POSTED",
+            "memo_code",
+        ),
+        "processor.file_chargeback": (
+            f"{settings.processor_url}/api/chargebacks/{claim.business_reference}",
+            "FILED",
+            "network_ref",
+        ),
+        "docs.send_notice": (
+            f"{settings.documents_url}/api/notices/{claim.business_reference}",
+            "SENT",
+            "notice_id",
+        ),
+    }
+    adapter = adapters.get(claim.capability_id)
+    if adapter is None:
         return _unavailable(
             claim,
             f"No target reconciliation adapter for applied capability {claim.capability_id}",
         )
+    url, expected_status, reference_field = adapter
 
     try:
-        response = httpx.get(
-            f"{settings.core_bank_url}/api/credits/{claim.business_reference}", timeout=3.0
-        )
+        response = httpx.get(url, timeout=3.0)
     except (httpx.TimeoutException, httpx.TransportError, OSError) as exc:
         return _unavailable(claim, f"Target inquiry failed: {exc}")
     except Exception as exc:
@@ -59,12 +76,14 @@ def _reconcile_claim(
 
     expected: dict[str, Any] = {
         "institution_id": claim.institution_id,
+        "procedure_id": claim.procedure_id,
+        "capability_id": claim.capability_id,
         "case_id": claim.case_id,
         "member_id": claim.member_id,
         "account_id": claim.account_id,
         "currency": claim.currency,
         "business_reference": claim.business_reference,
-        "status": "POSTED",
+        "status": expected_status,
         "effect_count": 1,
     }
     mismatches = [
@@ -83,9 +102,10 @@ def _reconcile_claim(
     executions = repo.get_executions_for_case(claim.case_id)
     matching = [item for item in executions if item.capability_id == claim.capability_id]
     audit_refs = {item.audit_ref for item in matching if item.audit_ref}
-    if len(audit_refs) != 1 or data.get("memo_code") not in audit_refs:
+    target_reference = data.get(reference_field)
+    if len(audit_refs) != 1 or target_reference not in audit_refs:
         mismatches.append(
-            f"target reference {data.get('memo_code')!r} does not match one ledger audit reference"
+            f"target reference {target_reference!r} does not match one ledger audit reference"
         )
     if mismatches:
         return _divergence(claim, "; ".join(mismatches), details=data)

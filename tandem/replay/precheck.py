@@ -99,12 +99,15 @@ def _identity_mismatch(
     data: Dict[str, Any],
 ) -> str:
     expected = {
+        "institution_id": str(inputs.get("institution_id", "")),
+        "procedure_id": "reg_e_dispute",
+        "capability_id": capability.id,
         "case_id": str(inputs.get("case_id", "")),
+        "member_id": str(inputs.get("member_id", "")),
+        "account_id": str(inputs.get("account_id", "")),
+        "currency": str(inputs.get("currency", "")),
+        "business_reference": str(inputs.get("case_id", "")),
     }
-    if capability.system in {"core_bank", "documents"}:
-        expected["member_id"] = str(inputs.get("member_id", ""))
-    if capability.system == "core_bank":
-        expected["account_id"] = str(inputs.get("account_id", ""))
     for field, value in expected.items():
         if not value or str(data.get(field, "")) != value:
             return f"Precheck identity mismatch for {field}: expected {value!r}, observed {data.get(field)!r}"

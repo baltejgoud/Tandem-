@@ -50,7 +50,7 @@ class DeterministicExecutor:
         def mark_submit_initiated() -> None:
             nonlocal execution_phase
             execution_phase = ExecutionPhase.SUBMIT_INITIATED
-            maybe_crash("F_BEFORE_SUBMIT")
+            maybe_crash("F_BEFORE_SUBMIT", capability.id)
 
         try:
             # Check for session expiration early if page loaded
@@ -87,7 +87,7 @@ class DeterministicExecutor:
                         semantic_target=step.semantic_target,
                     )
                     if step.action == StepAction.SUBMIT:
-                        maybe_crash("E_AFTER_GUARD")
+                        maybe_crash("E_AFTER_GUARD", capability.id)
 
                 # 2. Execute step action
                 if step.action == StepAction.NAVIGATE:
@@ -122,7 +122,7 @@ class DeterministicExecutor:
                     )
                     if step.action == StepAction.SUBMIT:
                         execution_phase = ExecutionPhase.SUBMIT_CONFIRMED
-                        maybe_crash("G_AFTER_TARGET_ACCEPTS")
+                        maybe_crash("G_AFTER_TARGET_ACCEPTS", capability.id)
 
             # Invariant check: Assert ZERO LLM calls took place during replay
             llm_calls_made = llm_tracker.call_count - llm_count_before
@@ -154,9 +154,9 @@ class DeterministicExecutor:
             if capability.effect.effect_class == EffectClass.COMMIT:
                 from tandem.replay.postcheck import execute_postcheck
 
-                maybe_crash("H_BEFORE_POSTCHECK")
+                maybe_crash("H_BEFORE_POSTCHECK", capability.id)
                 postcheck = execute_postcheck(capability, inputs)
-                maybe_crash("I_AFTER_POSTCHECK")
+                maybe_crash("I_AFTER_POSTCHECK", capability.id)
                 if not postcheck.is_success:
                     return postcheck.model_copy(
                         update={"execution_phase": ExecutionPhase.AFTER_SUBMIT_UNKNOWN}

@@ -81,6 +81,8 @@ async def api_get_credits(case_id: str):
         "currency": credit.currency,
         "business_reference": credit.business_reference,
         "institution_id": credit.institution_id,
+        "procedure_id": "reg_e_dispute",
+        "capability_id": "core.post_provisional_credit",
         "memo_code": credit.memo_code,
         "posted_at": credit.posted_at,
         "status": credit.status,

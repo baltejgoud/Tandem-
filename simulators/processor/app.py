@@ -30,15 +30,18 @@ async def api_set_mode(
     session_expired: bool = False,
     timeout_after_submit: bool = False,
     system_failure: bool = False,
+    fail_lookup_when_present: bool = False,
 ):
     processor_state.session_expired = session_expired
     processor_state.timeout_after_submit = timeout_after_submit
     processor_state.system_failure = system_failure
+    processor_state.fail_lookup_when_present = fail_lookup_when_present
     return {
         "status": "ok",
         "session_expired": session_expired,
         "timeout_after_submit": timeout_after_submit,
         "system_failure": system_failure,
+        "fail_lookup_when_present": fail_lookup_when_present,
     }
 
 
@@ -47,6 +50,8 @@ async def api_get_chargeback(case_id: str):
     cb = processor_state.find_by_case(case_id)
     if not cb:
         return JSONResponse(status_code=404, content={"error": "Chargeback not found"})
+    if processor_state.fail_lookup_when_present:
+        return JSONResponse(status_code=503, content={"error": "Filing inquiry unavailable"})
     return {
         "chargeback_id": cb.chargeback_id,
         "case_id": cb.case_id,
@@ -55,6 +60,14 @@ async def api_get_chargeback(case_id: str):
         "network_ref": cb.network_ref,
         "status": cb.status,
         "created_at": cb.created_at,
+        "institution_id": cb.institution_id,
+        "procedure_id": cb.procedure_id,
+        "capability_id": cb.capability_id,
+        "member_id": cb.member_id,
+        "account_id": cb.account_id,
+        "currency": cb.currency,
+        "business_reference": cb.business_reference,
+        "effect_count": processor_state.effect_count(case_id),
     }
 
 
@@ -113,6 +126,13 @@ async def file_chargeback(
     card_last4: str = Form(...),
     amount: Decimal = Form(...),
     dispute_reason: str = Form("Unauthorized Transaction"),
+    institution_id: str = Form("alpha"),
+    procedure_id: str = Form("reg_e_dispute"),
+    capability_id: str = Form("processor.file_chargeback"),
+    member_id: str = Form(""),
+    account_id: str = Form(""),
+    currency: str = Form("USD"),
+    business_reference: str = Form(""),
 ):
     if processor_state.session_expired:
         return session_expired_response()
@@ -130,6 +150,13 @@ async def file_chargeback(
             card_last4=card_last4,
             amount=amount,
             dispute_reason=dispute_reason,
+            institution_id=institution_id,
+            procedure_id=procedure_id,
+            capability_id=capability_id,
+            member_id=member_id,
+            account_id=account_id,
+            currency=currency,
+            business_reference=business_reference or case_id,
         )
         raise HTTPException(
             status_code=504,
@@ -142,6 +169,13 @@ async def file_chargeback(
         card_last4=card_last4,
         amount=amount,
         dispute_reason=dispute_reason,
+        institution_id=institution_id,
+        procedure_id=procedure_id,
+        capability_id=capability_id,
+        member_id=member_id,
+        account_id=account_id,
+        currency=currency,
+        business_reference=business_reference or case_id,
     )
 
     return HTMLResponse(f"""<!DOCTYPE html>

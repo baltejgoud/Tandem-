@@ -4,27 +4,27 @@ from __future__ import annotations
 
 import ctypes
 import os
-from typing import Any, Optional
+from typing import Optional
 
-import httpx
-
-from tandem.config import settings
 from tandem.domain.capability import load_capability_from_yaml
 from tandem.domain.effects import EffectClaimStatus
 from tandem.domain.outcomes import ExecutionOutcome, OutcomeCategory, OutcomeCode
 from tandem.ledger.repository import LedgerRepository
 from tandem.replay.precheck import execute_precheck
 
+_CAPABILITY_FILES = {
+    "core.post_provisional_credit": "capabilities/core/post_provisional_credit.yaml",
+    "processor.file_chargeback": "capabilities/processor/file_chargeback.yaml",
+    "docs.send_notice": "capabilities/documents/send_notice.yaml",
+}
 
-def recover_dead_core_claims(
-    repo: LedgerRepository,
-    case_id: str,
-    member_id: str,
-    amount: Any,
+
+def recover_dead_effect_claims(
+    repo: LedgerRepository, case_id: str
 ) -> Optional[ExecutionOutcome]:
-    """Resolve claims abandoned by a dead local worker using target truth."""
+    """Resolve any abandoned COMMIT claim using independent target truth."""
     for claim in repo.get_effect_claims_for_case(case_id):
-        if claim.capability_id != "core.post_provisional_credit" or claim.status not in {
+        if claim.status not in {
             EffectClaimStatus.CLAIMED.value,
             EffectClaimStatus.APPLYING.value,
         }:
@@ -34,25 +34,20 @@ def recover_dead_core_claims(
                 OutcomeCode.ALREADY_CLAIMED,
                 f"Effect claim is still owned by live or unverifiable worker {claim.owner_id}",
             )
-        try:
-            member_response = httpx.get(
-                f"{settings.core_bank_url}/api/member/{member_id}", timeout=3.0
-            )
-            member_response.raise_for_status()
-            account_id = str(member_response.json()["account_id"])
-        except Exception as exc:
+        capability_file = _CAPABILITY_FILES.get(claim.capability_id)
+        if capability_file is None:
             return _needs_human(
                 OutcomeCode.TARGET_RECONCILIATION_UNAVAILABLE,
-                f"Cannot resolve recovery identity: {exc}",
+                f"No recovery adapter for {claim.capability_id}",
             )
 
-        capability = load_capability_from_yaml("capabilities/core/post_provisional_credit.yaml")
+        capability = load_capability_from_yaml(capability_file)
         inputs = {
             "institution_id": claim.institution_id,
-            "member_id": member_id,
-            "account_id": account_id,
-            "case_id": case_id,
-            "amount": amount,
+            "member_id": claim.member_id,
+            "account_id": claim.account_id,
+            "case_id": claim.case_id,
+            "amount": claim.amount,
             "currency": claim.currency,
         }
         target = execute_precheck(capability, inputs)
@@ -89,9 +84,12 @@ def recover_dead_core_claims(
                     observed_entity=claim.member_id,
                     observed_amount=claim.amount,
                     audit_ref=target.audit_ref,
-                    money_moved=True,
+                    money_moved=claim.capability_id == "core.post_provisional_credit",
                 )
-            repo.update_case_status(case_id, "PROVISIONAL_CREDIT_POSTED", money_moved=True)
+            repo.stage_intent(case_id, claim.idempotency_key, claim.capability_id)
+            repo.mark_intent_committed(claim.idempotency_key)
+            if claim.capability_id == "core.post_provisional_credit":
+                repo.update_case_status(case_id, "PROVISIONAL_CREDIT_POSTED", money_moved=True)
             repo.record_event(
                 case_id,
                 "CRASH_RECOVERY_CONFIRMED_APPLIED",
@@ -123,6 +121,14 @@ def recover_dead_core_claims(
             f"Crash recovery inquiry was inconclusive: {target.code.value}",
         )
     return None
+
+
+def recover_dead_core_claims(
+    repo: LedgerRepository, case_id: str, member_id: str, amount: object
+) -> Optional[ExecutionOutcome]:
+    """Backward-compatible wrapper for callers predating generalized recovery."""
+    del member_id, amount
+    return recover_dead_effect_claims(repo, case_id)
 
 
 def _local_owner_is_dead(owner_id: str) -> bool:
