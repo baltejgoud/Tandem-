@@ -6,7 +6,7 @@
 | **PHASE 1** | Repository Scaffolding + Python Environment | **COMPLETED** | `pyproject.toml`, `.venv` (Python 3.12.10), Playwright Chromium, `Makefile` |
 | **PHASE 2** | Core Banking Simulator (Hostile UI) | **COMPLETED** | `simulators/core_bank/` (framesets, tables, fuzzy search, transposed IDs, memos, compliance) |
 | **PHASE 3** | Processor & Notice Simulators | **COMPLETED** | `simulators/processor/`, `simulators/documents/` (failure switch, timeout, postcheck) |
-| **PHASE 4** | Domain Models & Capability Schema | Pending | `tandem/domain/` (Pydantic models, effect classes, commit metadata) |
+| **PHASE 4** | Domain Models & Capability Schema | **COMPLETED** | `tandem/domain/` (Pydantic models, effect classes, commit metadata, bounds, scoped guards) |
 | **PHASE 5** | SQLite Procedure Ledger | Pending | `tandem/ledger/` (append-only events, WAL mode, state reconstruction) |
 | **PHASE 6** | Surface Abstraction | Pending | `tandem/surfaces/` (semantic targets, locator strategy, container guards) |
 | **PHASE 7** | Raw Playwright Deterministic Capability | Pending | Direct Playwright execution without LLM |
