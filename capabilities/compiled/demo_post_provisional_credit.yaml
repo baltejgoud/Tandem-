@@ -62,6 +62,7 @@ input_schema:
   - currency
 output_schema: {}
 scoped_guard:
+  guard_id: primary_commit_guard
   container_selector: '#credit_action_container, .confirm-panel'
   expected_institution_template: '{{input.institution_id}}'
   expected_member_template: '{{input.member_id}}'
@@ -130,8 +131,8 @@ steps:
   expected_text: null
   frame_selector: '#core_workspace_frame'
 - step_id: step_8_click
-  action: CLICK
-  semantic_target: Commit Button
+  action: SUBMIT
+  semantic_target: Final external credit actuation
   locator_candidates:
   - button.btn-commit-final
   - '#btn_commit_credit'
@@ -139,4 +140,5 @@ steps:
   input_value_template: null
   expected_text: null
   frame_selector: '#core_workspace_frame'
+  guard_ref: primary_commit_guard
 source_discovery_run_id: null

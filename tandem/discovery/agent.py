@@ -164,7 +164,7 @@ class DiscoveryAgent:
 
         recorder.record_click(
             selector="button.btn-commit-final",
-            semantic_target="Commit Button",
+            semantic_target="Final external credit actuation",
             frame_selector="#core_workspace_frame",
             locator_candidates=[
                 "button.btn-commit-final",
@@ -173,6 +173,8 @@ class DiscoveryAgent:
             ],
             container_selector="#credit_action_container, .confirm-panel",
             observed_text=container_text,
+            is_mutating=True,
+            guard_ref="primary_commit_guard",
         )
         frame.locator("button.btn-commit-final").click()
         self.page.wait_for_load_state("networkidle")

@@ -16,6 +16,7 @@ from tandem.domain.effects import (
     EffectSpec,
     PostcheckSpec,
     PrecheckSpec,
+    ReconciliationSpec,
 )
 from tandem.domain.outcomes import ExecutionOutcome, OutcomeCategory, OutcomeCode
 
@@ -55,6 +56,7 @@ def test_commit_without_precheck_rejected():
                 effect_class=EffectClass.COMMIT,
                 idempotency_key="regE:{{case_id}}:credit",
                 postcheck=PostcheckSpec(capability="core.read_memo"),
+                reconciliation=ReconciliationSpec(),
                 bounds=BoundsSpec(max_amount=500.0, currency="USD"),
             ),
             input_schema={"type": "object"},
@@ -135,6 +137,7 @@ def test_commit_without_scoped_guard_rejected():
                 ),
                 precheck=PrecheckSpec(capability="core.find_memo"),
                 postcheck=PostcheckSpec(capability="core.read_memo"),
+                reconciliation=ReconciliationSpec(),
                 bounds=BoundsSpec(max_amount=500.0, currency="USD"),
             ),
             input_schema={"type": "object"},
@@ -174,6 +177,7 @@ def test_valid_commit_capability_accepted_and_hashed():
                 params={"case_id": "{{input.case_id}}"},
                 expected_status="CONFIRMED",
             ),
+            reconciliation=ReconciliationSpec(),
             compensation="core.reverse_provisional_credit",
             bounds=BoundsSpec(max_amount=500.00, currency="USD"),
         ),
@@ -187,6 +191,7 @@ def test_valid_commit_capability_accepted_and_hashed():
             "required": ["member_id", "case_id", "amount"],
         },
         scoped_guard=ScopedGuardSpec(
+            guard_id="credit_commit_guard",
             container_selector="#credit_scope_container",
             expected_member_template="{{input.member_id}}",
             expected_amount_template="{{input.amount}}",
@@ -195,9 +200,10 @@ def test_valid_commit_capability_accepted_and_hashed():
         steps=[
             StepDefinition(
                 step_id="step_commit_click",
-                action=StepAction.CLICK,
-                semantic_target="Commit Button",
+                action=StepAction.SUBMIT,
+                semantic_target="Arbitrary human label",
                 locator_candidates=[".btn-commit-final", "#btn_commit"],
+                guard_ref="credit_commit_guard",
             )
         ],
     )

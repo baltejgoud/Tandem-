@@ -83,6 +83,49 @@ def test_commit_contract_requires_structural_guard_and_reconciliation() -> None:
         CapabilityDefinition.model_validate(data)
 
 
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda data: data.update(steps=[]),
+        lambda data: data["steps"][-1].update(action="CLICK"),
+        lambda data: data.update(scoped_guard=None),
+        lambda data: data["steps"][-1].update(guard_ref=None),
+        lambda data: data["steps"][-1].update(guard_ref="unrelated_guard"),
+        lambda data: data["effect"].update(identity=None),
+        lambda data: data["effect"].update(precheck=None),
+        lambda data: data["effect"].update(postcheck=None),
+        lambda data: data["effect"].update(reconciliation=None),
+    ],
+    ids=[
+        "zero-steps",
+        "no-mutating-actuation",
+        "no-guard",
+        "no-actuation-guard-ref",
+        "wrong-actuation-guard-ref",
+        "no-effect-identity",
+        "no-precheck",
+        "no-postcheck",
+        "no-reconciliation",
+    ],
+)
+def test_invalid_commit_topologies_are_rejected(mutation) -> None:
+    data = _artifact_data()
+    mutation(data)
+    with pytest.raises(ValidationError):
+        CapabilityDefinition.model_validate(data)
+
+
+def test_commit_safety_is_independent_of_human_readable_label() -> None:
+    data = _artifact_data()
+    data["steps"][-1]["semantic_target"] = "Anything an artifact author wants to call it"
+    capability = CapabilityDefinition.model_validate(data)
+    assert capability.steps[-1].action.value == "SUBMIT"
+    assert capability.steps[-1].guard_ref == capability.scoped_guard.guard_id
+    assert 'semantic_target == "Commit Button"' not in inspect.getsource(
+        DeterministicExecutor.execute
+    )
+
+
 def test_postcheck_outage_is_explicit_and_never_success(monkeypatch: pytest.MonkeyPatch) -> None:
     capability = load_capability_from_yaml(str(ARTIFACT))
 

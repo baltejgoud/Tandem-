@@ -1,7 +1,7 @@
 """Effect typing and safety metadata specifications for Tandem capabilities."""
 
-from enum import Enum
 from decimal import Decimal
+from enum import Enum
 from typing import Any, Dict, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -118,7 +118,7 @@ class EffectSpec(BaseModel):
     precheck: Optional[PrecheckSpec] = Field(default=None, description="Precheck specification")
     postcheck: Optional[PostcheckSpec] = Field(default=None, description="Postcheck specification")
     reconciliation: Optional[ReconciliationSpec] = Field(
-        default_factory=ReconciliationSpec, description="Reconciliation behavior"
+        default=None, description="Reconciliation behavior"
     )
     compensation: Optional[str] = Field(
         default=None, description="Optional compensation capability ID (e.g. reverse credit)"
@@ -137,12 +137,15 @@ class EffectSpec(BaseModel):
                 missing.append("precheck")
             if not self.postcheck:
                 missing.append("postcheck")
+            if not self.reconciliation:
+                missing.append("reconciliation")
             if not self.bounds:
                 missing.append("bounds")
 
             if missing:
                 raise ValueError(
                     f"COMMIT capability rejected: missing mandatory safety metadata: {', '.join(missing)}. "
-                    f"All COMMIT operations require precheck, postcheck, bounds, and idempotency key."
+                    "All COMMIT operations require identity, precheck, postcheck, "
+                    "reconciliation, bounds, and idempotency key."
                 )
         return self

@@ -67,9 +67,7 @@ class DeterministicExecutor:
                     pass
 
                 # 1. Container-scoped guard check immediately prior to or during commit actions
-                if step.action == StepAction.ASSERT_CONTAINER or (
-                    step.semantic_target == "Commit Button" and capability.scoped_guard
-                ):
+                if step.action in {StepAction.ASSERT_CONTAINER, StepAction.SUBMIT}:
                     verify_control_scoped_guard(
                         capability=capability,
                         inputs=inputs,
@@ -77,7 +75,7 @@ class DeterministicExecutor:
                         frame_selector=step.frame_selector or frame_selector,
                         overlay=self.overlay,
                         control_candidates=(
-                            step.locator_candidates if step.action == StepAction.CLICK else None
+                            step.locator_candidates if step.action == StepAction.SUBMIT else None
                         ),
                         semantic_target=step.semantic_target,
                     )
@@ -102,7 +100,7 @@ class DeterministicExecutor:
                         overlay=self.overlay,
                     )
 
-                elif step.action == StepAction.CLICK:
+                elif step.action in {StepAction.CLICK, StepAction.SUBMIT}:
                     effective_frame = step.frame_selector or frame_selector
                     self.surface.resolve_and_click(
                         semantic_target=step.semantic_target,

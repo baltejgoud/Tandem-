@@ -18,7 +18,11 @@ OVERLAYS: Dict[str, SurfaceOverlay] = {
         selector_overrides={
             "Member Search Input": ["#legacy_search_box", "input[name='q']"],
             "Post Provisional Credit Link": [".btn-action-legacy", "a.action-credit-btn", "text=Select & Adjust"],
-            "Commit Button": [".btn-commit-legacy", ".btn-commit-final", "button[type='submit']"],
+            "Final external credit actuation": [
+                ".btn-commit-legacy",
+                ".btn-commit-final",
+                "button[type='submit']",
+            ],
         },
         container_overrides={
             "#credit_action_container, .confirm-panel": ".legacy-confirm-box",

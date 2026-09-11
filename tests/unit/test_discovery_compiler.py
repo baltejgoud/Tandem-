@@ -1,7 +1,6 @@
 """Unit tests for Discovery Trace Recorder and Capability Compiler."""
 
 from pathlib import Path
-import pytest
 
 from tandem.discovery.compiler import CapabilityCompiler
 from tandem.discovery.recorder import TraceRecorder
@@ -71,6 +70,8 @@ def test_capability_compiler_generates_valid_yaml_and_hash(tmp_path: Path):
         selector="button.btn-commit-final",
         frame_selector="#core_workspace_frame",
         container_selector="#credit_action_container, .confirm-panel",
+        is_mutating=True,
+        guard_ref="primary_commit_guard",
     )
 
     trace = recorder.finalize(discovered_memo="MC-8123", money_moved=True)
