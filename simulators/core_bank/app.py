@@ -71,6 +71,8 @@ async def api_get_credits(case_id: str):
     credit = core_bank_state.find_credit_by_case(case_id)
     if not credit:
         return JSONResponse(status_code=404, content={"error": "No credit found for case"})
+    if core_bank_state.fail_credit_lookup_when_present:
+        return JSONResponse(status_code=503, content={"error": "Credit inquiry unavailable"})
     return {
         "case_id": credit.case_id,
         "member_id": credit.member_id,
@@ -388,6 +390,8 @@ async def workspace_credit_commit(
             raise ValueError("Currency binding mismatch")
         credit = core_bank_state.post_credit(case_id=case_id, member_id=member_id, amount=amount)
         member = core_bank_state.members[member_id]
+        if core_bank_state.simulate_post_commit_delay_ms > 0:
+            await asyncio.sleep(core_bank_state.simulate_post_commit_delay_ms / 1000.0)
     except Exception as e:
         return HTMLResponse(f"<h2>Transaction Failed: {html.escape(str(e))}</h2>", status_code=400)
 

@@ -1,6 +1,6 @@
 """Playwright implementation of the Surface abstraction."""
 
-from typing import List, Optional
+from typing import Callable, List, Optional
 
 from playwright.sync_api import Locator, Page
 
@@ -68,6 +68,7 @@ class PlaywrightSurface(Surface):
         candidates: List[str],
         frame_selector: Optional[str] = None,
         overlay: Optional[SurfaceOverlay] = None,
+        before_click: Optional[Callable[[], None]] = None,
     ) -> ObservedControl:
         context = self._get_context(frame_selector)
         active_candidates = (
@@ -79,6 +80,8 @@ class PlaywrightSurface(Surface):
         tag = loc.evaluate("el => el.tagName.toLowerCase()") or "element"
         is_enabled = loc.is_enabled()
 
+        if before_click:
+            before_click()
         loc.click()
         try:
             self.page.wait_for_timeout(200)

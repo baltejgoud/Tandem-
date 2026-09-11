@@ -13,7 +13,7 @@ from tandem.domain.errors import (
     PageDriftError,
     SessionExpiredError,
 )
-from tandem.domain.outcomes import ExecutionOutcome, OutcomeCategory, OutcomeCode
+from tandem.domain.outcomes import ExecutionOutcome, ExecutionPhase, OutcomeCategory, OutcomeCode
 from tandem.policy.telemetry import llm_tracker
 from tandem.replay.guards import verify_control_scoped_guard
 from tandem.surfaces.base import SurfaceOverlay
@@ -44,6 +44,11 @@ class DeterministicExecutor:
 
         context = {"input": inputs}
         frame_selector = "#core_workspace_frame"  # Standard hostile frame if applicable
+        execution_phase = ExecutionPhase.BEFORE_SUBMIT
+
+        def mark_submit_initiated() -> None:
+            nonlocal execution_phase
+            execution_phase = ExecutionPhase.SUBMIT_INITIATED
 
         try:
             # Check for session expiration early if page loaded
@@ -107,7 +112,12 @@ class DeterministicExecutor:
                         candidates=step.locator_candidates,
                         frame_selector=effective_frame,
                         overlay=self.overlay,
+                        before_click=(
+                            mark_submit_initiated if step.action == StepAction.SUBMIT else None
+                        ),
                     )
+                    if step.action == StepAction.SUBMIT:
+                        execution_phase = ExecutionPhase.SUBMIT_CONFIRMED
 
             # Invariant check: Assert ZERO LLM calls took place during replay
             llm_calls_made = llm_tracker.call_count - llm_count_before
@@ -141,7 +151,9 @@ class DeterministicExecutor:
 
                 postcheck = execute_postcheck(capability, inputs)
                 if not postcheck.is_success:
-                    return postcheck
+                    return postcheck.model_copy(
+                        update={"execution_phase": ExecutionPhase.AFTER_SUBMIT_UNKNOWN}
+                    )
                 memo_code = postcheck.audit_ref
                 money_moved = postcheck.money_moved
 
@@ -156,6 +168,7 @@ class DeterministicExecutor:
                 },
                 money_moved=money_moved,
                 audit_ref=memo_code,
+                execution_phase=execution_phase,
             )
 
         except EntityBindingMismatchError as e:
@@ -165,6 +178,7 @@ class DeterministicExecutor:
                 message=str(e),
                 details={"inputs": inputs},
                 money_moved=False,
+                execution_phase=execution_phase,
             )
 
         except AmountMismatchError as e:
@@ -174,6 +188,7 @@ class DeterministicExecutor:
                 message=str(e),
                 details={"inputs": inputs},
                 money_moved=False,
+                execution_phase=execution_phase,
             )
 
         except PageDriftError as e:
@@ -183,6 +198,7 @@ class DeterministicExecutor:
                 message=str(e),
                 details={"drift_events": self.surface.drift_events},
                 money_moved=False,
+                execution_phase=execution_phase,
             )
 
         except ComplianceInterstitialError as e:
@@ -192,6 +208,7 @@ class DeterministicExecutor:
                 message=str(e),
                 details={"interstitial_type": "REG_E_COMPLIANCE_REVIEW"},
                 money_moved=False,
+                execution_phase=execution_phase,
             )
 
         except SessionExpiredError as e:
@@ -200,12 +217,26 @@ class DeterministicExecutor:
                 code=OutcomeCode.SESSION_EXPIRED,
                 message=str(e),
                 money_moved=False,
+                execution_phase=execution_phase,
             )
 
         except Exception as e:
+            if capability.effect.effect_class == EffectClass.COMMIT and execution_phase in {
+                ExecutionPhase.SUBMIT_INITIATED,
+                ExecutionPhase.SUBMIT_CONFIRMED,
+            }:
+                return ExecutionOutcome(
+                    category=OutcomeCategory.UNCERTAIN_EFFECT,
+                    code=OutcomeCode.POSSIBLY_APPLIED,
+                    message=f"Browser failed after irreversible submit began: {e}",
+                    details={"original_error": str(e)},
+                    money_moved=False,
+                    execution_phase=ExecutionPhase.AFTER_SUBMIT_UNKNOWN,
+                )
             return ExecutionOutcome(
-                category=OutcomeCategory.HARD_FAILURE,
-                code=OutcomeCode.POLICY_VIOLATION,
-                message=f"Replay failed unexpectedly: {e}",
+                category=OutcomeCategory.RECOVERABLE_FAILURE,
+                code=OutcomeCode.NETWORK_TIMEOUT,
+                message=f"Replay failed before irreversible submit: {e}",
                 money_moved=False,
+                execution_phase=ExecutionPhase.BEFORE_SUBMIT,
             )
