@@ -23,9 +23,13 @@ class PlaywrightSurface(Surface):
         self.drift_events: List[str] = []
 
     def _get_context(self, frame_selector: Optional[str] = None):
-        """Return the target frame or top-level page."""
+        """Return the target frame if present, or fallback to top-level page."""
         if frame_selector:
-            return self.page.frame_locator(frame_selector)
+            try:
+                if self.page.locator(frame_selector).count() > 0:
+                    return self.page.frame_locator(frame_selector)
+            except Exception:
+                pass
         return self.page
 
     def _find_best_locator(
