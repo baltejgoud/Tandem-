@@ -11,11 +11,12 @@ from sqlalchemy.orm import Session
 
 from tandem.config import settings
 from tandem.domain.capability import load_capability_from_yaml
-from tandem.domain.outcomes import OutcomeCategory, OutcomeCode
 from tandem.domain.money import parse_money
+from tandem.domain.outcomes import OutcomeCategory, OutcomeCode
 from tandem.ledger.repository import LedgerRepository
 from tandem.ledger.service import LedgerService
 from tandem.replay.engine import EffectEngine
+from tandem.replay.target_reconciliation import reconcile_applied_effects
 from tandem.workflow.deadlines import add_business_days, calculate_reg_e_deadlines
 from tandem.workflow.state_machine import RegEState, can_transition
 
@@ -70,6 +71,24 @@ class RegEWorkflow:
         existing_case = self.repo.get_case(case_id)
         if existing_case:
             snapshot = self.service.reconstruct_case_state(case_id)
+            reconciliation_failure = reconcile_applied_effects(self.repo, case_id)
+            if reconciliation_failure is not None:
+                self.repo.update_case_status(case_id, RegEState.NEEDS_HUMAN.value)
+                self.repo.record_event(
+                    case_id=case_id,
+                    event_type=reconciliation_failure.code.value,
+                    step_name="resume.target_reconciliation",
+                    payload={
+                        "message": reconciliation_failure.message,
+                        "details": reconciliation_failure.details,
+                    },
+                )
+                self.session.commit()
+                return {
+                    "status": "NEEDS_HUMAN",
+                    "code": reconciliation_failure.code.value,
+                    "message": reconciliation_failure.message,
+                }
         else:
             self.repo.create_or_get_case(
                 case_id=case_id,

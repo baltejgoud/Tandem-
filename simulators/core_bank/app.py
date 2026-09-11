@@ -84,6 +84,7 @@ async def api_get_credits(case_id: str):
         "memo_code": credit.memo_code,
         "posted_at": credit.posted_at,
         "status": credit.status,
+        "effect_count": core_bank_state.effect_count(case_id),
     }
 
 

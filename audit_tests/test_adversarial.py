@@ -5,18 +5,21 @@ evidence that the current implementation does not enforce the corresponding
 invariant; these are not regression tests for the repository's current behavior.
 """
 
-from concurrent.futures import ThreadPoolExecutor
 import threading
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 from playwright.sync_api import sync_playwright
 from pydantic import ValidationError
 
 from simulators.core_bank.state import core_bank_state
-from tandem.domain.capability import CapabilityDefinition, ScopedGuardSpec, load_capability_from_yaml
+from tandem.domain.capability import (
+    CapabilityDefinition,
+    ScopedGuardSpec,
+    load_capability_from_yaml,
+)
 from tandem.domain.effects import BoundsSpec, EffectClass, EffectSpec, PostcheckSpec, PrecheckSpec
 from tandem.domain.errors import (
-    AmountMismatchError,
     EntityBindingMismatchError,
     LeaseConflictError,
 )
@@ -208,9 +211,13 @@ def test_resume_reconciles_external_state_after_simulator_restart(tmp_path):
         result = RegEWorkflow(session_2, page).run_case("D-RESTART", "8830142", 340.0)
         browser.close()
 
-    assert result["status"] == "SUCCESS"
-    assert core_bank_state.find_credit_by_case("D-RESTART") is not None
-    assert core_bank_state.members["8830142"].balance == 1580.50
+    # The original audit expected replay to recreate the missing target effect.
+    # That would blindly repeat a ledger-APPLIED COMMIT. The stronger Phase 12
+    # contract requires explicit divergence and human review instead.
+    assert result["status"] == "NEEDS_HUMAN"
+    assert result["code"] == OutcomeCode.TARGET_LEDGER_DIVERGENCE.value
+    assert core_bank_state.find_credit_by_case("D-RESTART") is None
+    assert core_bank_state.members["8830142"].balance == 1240.50
     engine_2.dispose()
 
 

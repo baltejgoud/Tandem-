@@ -2,9 +2,8 @@
 
 import json
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from datetime import timedelta
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy import select, update
@@ -245,7 +244,7 @@ class LedgerRepository:
         record = self.get_effect_claim(identity.idempotency_key)
         if record is None:
             raise RuntimeError("Effect claim insert completed without a readable claim")
-        acquired = bool(result.rowcount == 1)
+        acquired = bool(getattr(result, "rowcount", 0) == 1)
         return EffectClaim(
             acquired=acquired,
             status=record.status if acquired else self._existing_claim_outcome(record.status),
@@ -264,6 +263,14 @@ class LedgerRepository:
             EffectClaimRecord.idempotency_key == idempotency_key
         )
         return self.session.scalar(stmt)
+
+    def get_effect_claims_for_case(self, case_id: str) -> List[EffectClaimRecord]:
+        stmt = (
+            select(EffectClaimRecord)
+            .where(EffectClaimRecord.case_id == case_id)
+            .order_by(EffectClaimRecord.id.asc())
+        )
+        return list(self.session.scalars(stmt).all())
 
     def transition_effect_claim(
         self,
@@ -288,7 +295,7 @@ class LedgerRepository:
         )
         result = self.session.execute(stmt)
         self.session.flush()
-        return bool(result.rowcount == 1)
+        return bool(getattr(result, "rowcount", 0) == 1)
 
     def validate_effect_token(
         self,
