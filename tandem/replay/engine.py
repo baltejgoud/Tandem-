@@ -125,7 +125,7 @@ class EffectEngine:
                 code = OutcomeCode(claim.status)
                 if code == OutcomeCode.ALREADY_APPLIED:
                     confirmed = execute_precheck(capability, inputs)
-                    if confirmed and confirmed.code == OutcomeCode.ALREADY_APPLIED:
+                    if confirmed.code == OutcomeCode.ALREADY_APPLIED:
                         return confirmed
                 return ExecutionOutcome(
                     category=OutcomeCategory.BUSINESS_OUTCOME,
@@ -146,7 +146,7 @@ class EffectEngine:
         # -------------------------------------------------------------------
         if capability.effect.effect_class == EffectClass.COMMIT:
             precheck_outcome = execute_precheck(capability, inputs)
-            if precheck_outcome and precheck_outcome.code == OutcomeCode.ALREADY_APPLIED:
+            if precheck_outcome.code == OutcomeCode.ALREADY_APPLIED:
                 # Effect already exists! Record to ledger and return immediately without firing browser steps.
                 self.repo.record_event(
                     case_id=case_id,
@@ -178,6 +178,26 @@ class EffectEngine:
                         {EffectClaimStatus.CLAIMED},
                         EffectClaimStatus.APPLIED,
                     )
+                self.session.commit()
+                return precheck_outcome
+            if precheck_outcome.code != OutcomeCode.NOT_APPLIED:
+                if claim and idempotency_key:
+                    self.repo.transition_effect_claim(
+                        idempotency_key,
+                        self.owner_id,
+                        claim.fencing_token,
+                        {EffectClaimStatus.CLAIMED},
+                        EffectClaimStatus.FAILED_RETRYABLE,
+                    )
+                self.repo.record_event(
+                    case_id=case_id,
+                    event_type="PRECHECK_HALTED",
+                    step_name=capability.id,
+                    payload={
+                        "code": precheck_outcome.code.value,
+                        "message": precheck_outcome.message,
+                    },
+                )
                 self.session.commit()
                 return precheck_outcome
 

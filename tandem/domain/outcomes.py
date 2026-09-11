@@ -24,6 +24,7 @@ class OutcomeCode(str, Enum):
 
     # SUCCESS
     COMPLETED = "COMPLETED"
+    NOT_APPLIED = "NOT_APPLIED"
 
     # BUSINESS_OUTCOME
     ALREADY_APPLIED = "ALREADY_APPLIED"

@@ -17,8 +17,11 @@ from tandem.domain.capability import CapabilityDefinition, load_capability_from_
 from tandem.domain.effects import EffectSpec
 from tandem.domain.outcomes import OutcomeCategory, OutcomeCode
 from tandem.policy.engine import PolicyEngine
+from tandem.ledger.database import get_engine, get_session_factory, init_db
+from tandem.replay.engine import EffectEngine
 from tandem.replay.executor import DeterministicExecutor
 from tandem.replay.postcheck import execute_postcheck
+from tandem.replay.precheck import execute_precheck
 
 
 ARTIFACT = Path("capabilities/compiled/demo_post_provisional_credit.yaml")
@@ -100,6 +103,90 @@ def test_postcheck_outage_is_explicit_and_never_success(monkeypatch: pytest.Monk
     assert outcome is not None
     assert outcome.category != OutcomeCategory.SUCCESS
     assert outcome.code in {OutcomeCode.POSTCHECK_UNCERTAIN, OutcomeCode.UNCERTAIN_EFFECT}
+
+
+@pytest.mark.parametrize(
+    ("status_code", "payload", "expected_code"),
+    [
+        (500, {"error": "down"}, OutcomeCode.PRECHECK_UNAVAILABLE),
+        (200, None, OutcomeCode.PRECHECK_INVALID_RESPONSE),
+        (200, {"case_id": "D-PRECHECK", "status": "POSTED"}, OutcomeCode.PRECHECK_AMBIGUOUS),
+        (
+            200,
+            {
+                "case_id": "D-OTHER",
+                "member_id": "8830142",
+                "account_id": "CHK-8830142-01",
+                "amount": "340.00",
+                "memo_code": "MC-1",
+                "status": "POSTED",
+            },
+            OutcomeCode.PRECHECK_AMBIGUOUS,
+        ),
+    ],
+    ids=["http-500", "malformed-json", "missing-identity", "identity-mismatch"],
+)
+def test_precheck_non_absence_states_halt(
+    monkeypatch: pytest.MonkeyPatch,
+    status_code: int,
+    payload: dict[str, object] | None,
+    expected_code: OutcomeCode,
+) -> None:
+    capability = load_capability_from_yaml(str(ARTIFACT))
+
+    class Response:
+        def __init__(self) -> None:
+            self.status_code = status_code
+
+        def json(self):
+            if payload is None:
+                raise ValueError("not json")
+            return payload
+
+    monkeypatch.setattr("tandem.replay.precheck.httpx.get", lambda *_args, **_kwargs: Response())
+    outcome = execute_precheck(
+        capability,
+        {
+            "institution_id": "alpha",
+            "member_id": "8830142",
+            "account_id": "CHK-8830142-01",
+            "case_id": "D-PRECHECK",
+            "amount": "340.00",
+            "currency": "USD",
+        },
+    )
+    assert outcome.code == expected_code
+    assert outcome.category == OutcomeCategory.HARD_FAILURE
+
+
+def test_precheck_outage_never_reaches_external_mutation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    capability = load_capability_from_yaml(str(ARTIFACT))
+    monkeypatch.setattr(
+        "tandem.replay.precheck.httpx.get",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(httpx.ConnectTimeout("down")),
+    )
+    engine = get_engine(str(tmp_path / "precheck-halt.db"))
+    init_db(engine)
+    factory = get_session_factory(engine)
+    with factory() as session:
+        effect_engine = EffectEngine(session, page=object())
+        effect_engine.executor.execute = lambda *_args, **_kwargs: pytest.fail(
+            "external mutation was reached while precheck was unavailable"
+        )
+        outcome = effect_engine.execute_capability(
+            capability,
+            {
+                "institution_id": "alpha",
+                "member_id": "8830142",
+                "account_id": "CHK-8830142-01",
+                "case_id": "D-PRECHECK-HALT",
+                "amount": "340.00",
+                "currency": "USD",
+            },
+        )
+    assert outcome.code == OutcomeCode.PRECHECK_UNAVAILABLE
 
 
 def test_guard_contract_requires_account_binding() -> None:
