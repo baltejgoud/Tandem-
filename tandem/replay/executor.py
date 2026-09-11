@@ -5,6 +5,7 @@ from typing import Any, Dict, Optional
 from playwright.sync_api import Page
 
 from tandem.domain.capability import CapabilityDefinition, StepAction
+from tandem.domain.effects import EffectClass
 from tandem.domain.errors import (
     AmountMismatchError,
     ComplianceInterstitialError,
@@ -12,8 +13,8 @@ from tandem.domain.errors import (
     PageDriftError,
     SessionExpiredError,
 )
-from tandem.domain.outcomes import ExecutionOutcome, OutcomeCategory, OutcomeCode
 from tandem.domain.money import parse_money
+from tandem.domain.outcomes import ExecutionOutcome, OutcomeCategory, OutcomeCode
 from tandem.policy.telemetry import llm_tracker
 from tandem.surfaces.base import SurfaceOverlay
 from tandem.surfaces.playwright_surface import PlaywrightSurface
@@ -158,14 +159,16 @@ class DeterministicExecutor:
             except Exception:
                 pass
 
-            # Fallback to postcheck verification if DOM extraction was transient
-            if not memo_code and capability.effect.postcheck:
+            # Every COMMIT requires independent target confirmation. DOM receipts
+            # are evidence, but never sufficient proof of an external effect.
+            if capability.effect.effect_class == EffectClass.COMMIT:
                 from tandem.replay.postcheck import execute_postcheck
 
-                pc = execute_postcheck(capability, inputs)
-                if pc and pc.audit_ref:
-                    memo_code = pc.audit_ref
-                    money_moved = pc.money_moved
+                postcheck = execute_postcheck(capability, inputs)
+                if not postcheck.is_success:
+                    return postcheck
+                memo_code = postcheck.audit_ref
+                money_moved = postcheck.money_moved
 
             return ExecutionOutcome(
                 category=OutcomeCategory.SUCCESS,

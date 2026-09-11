@@ -9,20 +9,21 @@ from pathlib import Path
 import httpx
 import pytest
 import yaml
+from playwright.sync_api import sync_playwright
 from pydantic import ValidationError
 
+from simulators.core_bank.state import core_bank_state
 from tandem.discovery.agent import DiscoveryAgent
 from tandem.discovery.recorder import DiscoveryTrace
 from tandem.domain.capability import CapabilityDefinition, load_capability_from_yaml
 from tandem.domain.effects import EffectSpec
 from tandem.domain.outcomes import OutcomeCategory, OutcomeCode
-from tandem.policy.engine import PolicyEngine
 from tandem.ledger.database import get_engine, get_session_factory, init_db
+from tandem.policy.engine import PolicyEngine
 from tandem.replay.engine import EffectEngine
 from tandem.replay.executor import DeterministicExecutor
 from tandem.replay.postcheck import execute_postcheck
 from tandem.replay.precheck import execute_precheck
-
 
 ARTIFACT = Path("capabilities/compiled/demo_post_provisional_credit.yaml")
 
@@ -102,7 +103,97 @@ def test_postcheck_outage_is_explicit_and_never_success(monkeypatch: pytest.Monk
     )
     assert outcome is not None
     assert outcome.category != OutcomeCategory.SUCCESS
-    assert outcome.code in {OutcomeCode.POSTCHECK_UNCERTAIN, OutcomeCode.UNCERTAIN_EFFECT}
+    assert outcome.code in {
+        OutcomeCode.POSTCHECK_UNAVAILABLE,
+        OutcomeCode.POSTCHECK_UNCERTAIN,
+        OutcomeCode.UNCERTAIN_EFFECT,
+    }
+
+
+def test_postcheck_outage_after_submit_never_reports_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    capability = load_capability_from_yaml(str(ARTIFACT))
+    inputs = {
+        "institution_id": "alpha",
+        "member_id": "8830142",
+        "account_id": "CHK-8830142-01",
+        "case_id": "D-POSTCHECK-AFTER-SUBMIT",
+        "amount": "340.00",
+        "currency": "USD",
+    }
+
+    monkeypatch.setattr(
+        "tandem.replay.postcheck.httpx.get",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(httpx.ConnectTimeout("down")),
+    )
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        outcome = DeterministicExecutor(browser.new_page()).execute(capability, inputs)
+        browser.close()
+
+    assert core_bank_state.find_credit_by_case(inputs["case_id"]) is not None
+    assert outcome.category == OutcomeCategory.UNCERTAIN_EFFECT
+    assert outcome.code == OutcomeCode.POSTCHECK_UNAVAILABLE
+    assert outcome.is_success is False
+
+
+@pytest.mark.parametrize(
+    ("status_code", "payload", "expected_code"),
+    [
+        (404, {"error": "absent"}, OutcomeCode.CONFIRMED_NOT_APPLIED),
+        (500, {"error": "down"}, OutcomeCode.POSTCHECK_UNAVAILABLE),
+        (200, None, OutcomeCode.POSTCHECK_INVALID_RESPONSE),
+        (200, {"case_id": "D-POSTCHECK", "status": "POSTED"}, OutcomeCode.POSTCHECK_AMBIGUOUS),
+        (
+            200,
+            {
+                "case_id": "D-OTHER",
+                "member_id": "8830142",
+                "account_id": "CHK-8830142-01",
+                "amount": "340.00",
+                "memo_code": "MC-1",
+                "status": "POSTED",
+            },
+            OutcomeCode.POSTCHECK_AMBIGUOUS,
+        ),
+    ],
+    ids=["confirmed-absent", "http-500", "malformed-json", "missing-identity", "mismatch"],
+)
+def test_postcheck_states_are_explicit(
+    monkeypatch: pytest.MonkeyPatch,
+    status_code: int,
+    payload: dict[str, object] | None,
+    expected_code: OutcomeCode,
+) -> None:
+    capability = load_capability_from_yaml(str(ARTIFACT))
+
+    class Response:
+        def __init__(self) -> None:
+            self.status_code = status_code
+
+        def json(self):
+            if payload is None:
+                raise ValueError("not json")
+            return payload
+
+    monkeypatch.setattr("tandem.replay.postcheck.httpx.get", lambda *_args, **_kwargs: Response())
+    outcome = execute_postcheck(
+        capability,
+        {
+            "institution_id": "alpha",
+            "member_id": "8830142",
+            "account_id": "CHK-8830142-01",
+            "case_id": "D-POSTCHECK",
+            "amount": "340.00",
+            "currency": "USD",
+        },
+    )
+    assert outcome.code == expected_code
+    if expected_code == OutcomeCode.CONFIRMED_NOT_APPLIED:
+        assert outcome.category == OutcomeCategory.BUSINESS_OUTCOME
+    else:
+        assert outcome.category == OutcomeCategory.UNCERTAIN_EFFECT
 
 
 @pytest.mark.parametrize(
