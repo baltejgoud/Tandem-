@@ -1,4 +1,5 @@
 """Sanity check for environment and settings."""
+
 from tandem.config import settings
 
 
