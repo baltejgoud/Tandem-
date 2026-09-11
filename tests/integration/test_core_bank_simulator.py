@@ -12,6 +12,8 @@ client = TestClient(app)
 @pytest.fixture(autouse=True)
 def reset_core_bank():
     core_bank_state.seed()
+    yield
+    core_bank_state.seed()
 
 
 def test_seed_and_member_lookup():

@@ -42,7 +42,8 @@ class PlaywrightSurface(Surface):
         for idx, selector in enumerate(candidates):
             try:
                 loc = context.locator(selector).first
-                if loc.is_visible(timeout=1500):
+                timeout = 5000 if idx == 0 else 2000
+                if loc.is_visible(timeout=timeout):
                     if idx > 0:
                         drift_msg = (
                             f"Drift detected for '{semantic_target}': primary candidate '{candidates[0]}' "

@@ -16,6 +16,9 @@ docs_client = TestClient(docs_app)
 def reset_simulators():
     processor_state.reset()
     document_state.reset()
+    yield
+    processor_state.reset()
+    document_state.reset()
 
 
 def test_processor_successful_chargeback():
