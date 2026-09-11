@@ -16,9 +16,39 @@ from tandem.ledger.repository import LedgerRepository
 from tandem.policy.engine import PolicyEngine
 from tandem.replay.crash_injection import maybe_crash
 from tandem.replay.executor import DeterministicExecutor, render_template
+from tandem.replay.http_executor import execute_http_commit
 from tandem.replay.precheck import execute_precheck
 from tandem.replay.reconciliation import reconcile_commit_execution
 from tandem.surfaces.base import SurfaceOverlay
+
+
+def settle_claim_status(outcome: ExecutionOutcome) -> EffectClaimStatus:
+    """Map a COMMIT outcome onto the durable claim lifecycle.
+
+    Only a target-confirmed effect settles as APPLIED. Anything that may have
+    reached the target without proof stays UNCERTAIN and fences every later
+    attempt. Halts that provably happened before the submit -- a recoverable
+    transport/session failure, a human interstitial, or a target that
+    positively reports absence -- leave the claim retryable so the same effect
+    can be re-admitted (with a new fencing token) once the condition clears.
+    Guard and policy violations are permanent: repeating them blindly would
+    repeat the mismatch.
+    """
+    if outcome.is_success:
+        return EffectClaimStatus.APPLIED
+    if outcome.category == OutcomeCategory.UNCERTAIN_EFFECT:
+        return EffectClaimStatus.UNCERTAIN
+    if outcome.code == OutcomeCode.CONFIRMED_NOT_APPLIED:
+        # The target's own inquiry positively reported absence after the
+        # interrupted submit; that proof, not the transport, decides.
+        return EffectClaimStatus.FAILED_RETRYABLE
+    if outcome.execution_phase != ExecutionPhase.BEFORE_SUBMIT:
+        # Any other non-confirmed outcome after the submit began is, by
+        # definition, not provably absent.
+        return EffectClaimStatus.UNCERTAIN
+    if outcome.category in {OutcomeCategory.RECOVERABLE_FAILURE, OutcomeCategory.NEEDS_HUMAN}:
+        return EffectClaimStatus.FAILED_RETRYABLE
+    return EffectClaimStatus.FAILED_PERMANENT
 
 
 class EffectEngine:
@@ -123,7 +153,7 @@ class EffectEngine:
                     },
                 )
             self.session.commit()
-            maybe_crash("C_AFTER_CLAIM")
+            maybe_crash("C_AFTER_CLAIM", capability.id)
             if not claim.acquired:
                 code = OutcomeCode(claim.status)
                 if code == OutcomeCode.ALREADY_APPLIED:
@@ -203,7 +233,17 @@ class EffectEngine:
                 )
                 self.session.commit()
                 return precheck_outcome
-            maybe_crash("D_AFTER_PRECHECK")
+            maybe_crash("D_AFTER_PRECHECK", capability.id)
+
+            assert idempotency_key is not None
+            self.repo.stage_intent(case_id, idempotency_key, capability.id)
+            self.repo.record_event(
+                case_id=case_id,
+                event_type="EFFECT_INTENT_STAGED",
+                step_name=capability.id,
+                payload={"idempotency_key": idempotency_key},
+            )
+            self.session.commit()
 
         # -------------------------------------------------------------------
         # 4. Acquire browser-session lease and durably enter APPLYING
@@ -235,7 +275,10 @@ class EffectEngine:
         # 5. Deterministic Browser Replay (Includes Control-Scoped Guards)
         # -------------------------------------------------------------------
         try:
-            outcome = self.executor.execute(capability=capability, inputs=inputs)
+            if any(step.action.value == "HTTP_POST" for step in capability.steps):
+                outcome = execute_http_commit(capability, inputs)
+            else:
+                outcome = self.executor.execute(capability=capability, inputs=inputs)
             if capability.effect.effect_class == EffectClass.COMMIT and (
                 outcome.code == OutcomeCode.POSSIBLY_APPLIED
                 or outcome.execution_phase == ExecutionPhase.AFTER_SUBMIT_UNKNOWN
@@ -262,7 +305,7 @@ class EffectEngine:
         # -------------------------------------------------------------------
         # 6. Post-Action Settlement, Audit Persist & Lease Release
         # -------------------------------------------------------------------
-        maybe_crash("J_BEFORE_FINAL_LEDGER_EVENT")
+        maybe_crash("J_BEFORE_FINAL_LEDGER_EVENT", capability.id)
         self.repo.complete_execution(
             execution_id=exec_record.id,
             status=outcome.code.value,
@@ -284,6 +327,14 @@ class EffectEngine:
                 event_type="MONEY_MOVED",
                 step_name=capability.id,
                 payload={"amount": amount, "ref": outcome.audit_ref},
+            )
+
+        if outcome.code == OutcomeCode.CONFIRMED_APPLIED:
+            self.repo.record_event(
+                case_id=case_id,
+                event_type="EFFECT_RECONCILED",
+                step_name=capability.id,
+                payload={"audit_ref": outcome.audit_ref},
             )
 
         if outcome.category == OutcomeCategory.UNCERTAIN_EFFECT:
@@ -314,14 +365,7 @@ class EffectEngine:
             )
 
         if claim and idempotency_key:
-            if outcome.is_success:
-                target_status = EffectClaimStatus.APPLIED
-            elif outcome.category == OutcomeCategory.UNCERTAIN_EFFECT:
-                target_status = EffectClaimStatus.UNCERTAIN
-            elif outcome.category == OutcomeCategory.RECOVERABLE_FAILURE:
-                target_status = EffectClaimStatus.FAILED_RETRYABLE
-            else:
-                target_status = EffectClaimStatus.FAILED_PERMANENT
+            target_status = settle_claim_status(outcome)
             transitioned = self.repo.transition_effect_claim(
                 idempotency_key,
                 self.owner_id,
@@ -331,6 +375,8 @@ class EffectEngine:
             )
             if not transitioned:
                 raise RuntimeError("Effect claim fencing token became stale before settlement")
+            if outcome.is_success:
+                self.repo.mark_intent_committed(idempotency_key)
 
         self.repo.release_lease(case_id=case_id)
         self.session.commit()

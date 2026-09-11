@@ -16,11 +16,23 @@ from tandem.domain.outcomes import OutcomeCategory, OutcomeCode
 from tandem.ledger.repository import LedgerRepository
 from tandem.ledger.service import LedgerService
 from tandem.replay.crash_injection import maybe_crash
-from tandem.replay.crash_recovery import recover_dead_core_claims
+from tandem.replay.crash_recovery import recover_dead_effect_claims
 from tandem.replay.engine import EffectEngine
 from tandem.replay.target_reconciliation import reconcile_applied_effects
 from tandem.workflow.deadlines import add_business_days, calculate_reg_e_deadlines
 from tandem.workflow.state_machine import RegEState, can_transition
+
+_HAPPY_PATH = [
+    RegEState.RECEIVED,
+    RegEState.MEMBER_VERIFIED,
+    RegEState.TRANSACTION_VERIFIED,
+    RegEState.DUPLICATE_CHECKED,
+    RegEState.CHARGEBACK_FILED,
+    RegEState.PROVISIONAL_CREDIT_POSTED,
+    RegEState.NOTICE_PENDING,
+    RegEState.NOTICE_SENT,
+    RegEState.WAITING_RESOLUTION,
+]
 
 
 class RegEWorkflow:
@@ -45,6 +57,11 @@ class RegEWorkflow:
     ) -> None:
         case = self.repo.get_case(case_id)
         current = RegEState(case.status) if case else RegEState.RECEIVED
+        if current == new_state:
+            if money_moved:
+                self.repo.update_case_status(case_id, status=new_state.value, money_moved=True)
+                self.session.commit()
+            return
         if not can_transition(current, new_state):
             raise ValueError(f"Illegal state transition from {current} to {new_state}")
 
@@ -56,6 +73,23 @@ class RegEWorkflow:
             payload={"from": current.value, "to": new_state.value},
         )
         self.session.commit()
+
+    def _ensure_reached(
+        self, case_id: str, milestone: RegEState, money_moved: Optional[bool] = None
+    ) -> None:
+        """Advance the state projection to a happy-path milestone if it is behind.
+
+        Projections are derived from durable effect facts. When crash recovery
+        confirms an effect that the previous worker never settled, the state
+        machine must still catch up; when the projection is already at or past
+        the milestone (or parked in an escalated state), nothing changes.
+        """
+        case = self.repo.get_case(case_id)
+        current = RegEState(case.status) if case else RegEState.RECEIVED
+        if current in _HAPPY_PATH and _HAPPY_PATH.index(current) >= _HAPPY_PATH.index(milestone):
+            return
+        if can_transition(current, milestone):
+            self.transition(case_id, milestone, money_moved=money_moved)
 
     def run_case(
         self,
@@ -72,9 +106,7 @@ class RegEWorkflow:
         # 0. Check if case already exists in ledger
         existing_case = self.repo.get_case(case_id)
         if existing_case:
-            recovery_failure = recover_dead_core_claims(
-                self.repo, case_id, member_id, amount
-            )
+            recovery_failure = recover_dead_effect_claims(self.repo, case_id)
             if recovery_failure is not None:
                 self.repo.update_case_status(case_id, RegEState.NEEDS_HUMAN.value)
                 self.repo.record_event(
@@ -109,19 +141,13 @@ class RegEWorkflow:
                     "message": reconciliation_failure.message,
                 }
             deadlines = calculate_reg_e_deadlines(clock)
-            obligation = self.repo.create_obligation(
-                case_id, "NOTICE_2_DAY", add_business_days(clock, 2)
-            )
+            self.repo.create_obligation(case_id, "NOTICE_2_DAY", add_business_days(clock, 2))
             self.repo.create_deadline(
                 case_id, "INVESTIGATION_10_DAY", deadlines["INVESTIGATION_10_DAY"]
             )
             self.repo.create_deadline(
                 case_id, "FINAL_RESOLUTION_45_DAY", deadlines["FINAL_RESOLUTION_45_DAY"]
             )
-            refreshed_case = self.repo.get_case(case_id)
-            if refreshed_case and refreshed_case.money_moved:
-                self.repo.activate_obligation(case_id, "NOTICE_2_DAY")
-                self.repo.create_deadline(case_id, "NOTICE_2_DAY", obligation.due_at)
             self.session.commit()
             snapshot = self.service.reconstruct_case_state(case_id)
         else:
@@ -166,6 +192,20 @@ class RegEWorkflow:
             self.repo.complete_execution(exec_rec.id, status="SUCCESS", observed_entity=member_id)
             self.transition(case_id, RegEState.MEMBER_VERIFIED)
 
+        member_response = httpx.get(f"{settings.core_bank_url}/api/member/{member_id}", timeout=3.0)
+        if member_response.status_code != 200:
+            self.transition(case_id, RegEState.NEEDS_HUMAN)
+            return {"status": "NEEDS_HUMAN", "error": "Unable to bind member account identity"}
+        account_id = str(member_response.json()["account_id"])
+        common_effect_inputs = {
+            "institution_id": "alpha",
+            "member_id": member_id,
+            "account_id": account_id,
+            "case_id": case_id,
+            "amount": amount,
+            "currency": "USD",
+        }
+
         # -------------------------------------------------------------------
         # Step 2: Locate Transaction (READ)
         # -------------------------------------------------------------------
@@ -196,68 +236,23 @@ class RegEWorkflow:
         # Step 4: Card Processor Chargeback (COMMIT)
         # -------------------------------------------------------------------
         if "processor.file_chargeback" not in snapshot.completed_capabilities:
-            resp = httpx.post(
-                f"{settings.processor_url}/chargeback/file",
-                data={"case_id": case_id, "card_last4": card_last4, "amount": amount},
-                timeout=5.0,
+            if not self.page:
+                raise RuntimeError("Execution page required for effect orchestration")
+            processor_capability = load_capability_from_yaml(
+                "capabilities/processor/file_chargeback.yaml"
             )
-            if resp.status_code == 401:
-                self.transition(case_id, RegEState.NEEDS_HUMAN)
-                return {"status": "NEEDS_HUMAN", "error": "Processor session expired"}
-            elif resp.status_code == 504:
-                # Interrupted request -> run postcheck reconciliation inquiry!
-                try:
-                    inquiry = httpx.get(
-                        f"{settings.processor_url}/api/chargebacks/{case_id}", timeout=3.0
-                    )
-                    if inquiry.status_code == 200:
-                        data = inquiry.json()
-                        network_ref = data.get("network_ref", f"CB-{case_id}")
-                        exec_rec = self.repo.start_execution(
-                            case_id=case_id,
-                            capability_id="processor.file_chargeback",
-                            capability_version="1.0.0",
-                            effect_class="COMMIT",
-                            idempotency_key=f"regE:{case_id}:chargeback",
-                        )
-                        self.repo.complete_execution(
-                            exec_rec.id, status="SUCCESS", audit_ref=network_ref
-                        )
-                        self.repo.record_event(
-                            case_id=case_id,
-                            event_type="EFFECT_RECONCILED",
-                            step_name="processor.file_chargeback",
-                            payload={"network_ref": network_ref, "message": "Reconciled after 504"},
-                        )
-                        self.transition(case_id, RegEState.CHARGEBACK_FILED)
-                    else:
-                        # Postcheck inconclusive -> UNCERTAIN_EFFECT!
-                        self.transition(case_id, RegEState.UNCERTAIN_EFFECT)
-                        return {
-                            "status": "UNCERTAIN_EFFECT",
-                            "code": "UNCERTAIN_EFFECT",
-                            "error": "Processor timeout dropped; postcheck inquiry inconclusive",
-                        }
-                except Exception:
-                    self.transition(case_id, RegEState.UNCERTAIN_EFFECT)
-                    return {
-                        "status": "UNCERTAIN_EFFECT",
-                        "code": "UNCERTAIN_EFFECT",
-                        "error": "Processor timeout dropped; postcheck inquiry failed",
-                    }
-            elif resp.status_code != 200:
-                self.transition(case_id, RegEState.FAILED)
-                return {"status": "FAILED", "error": "Processor chargeback failed"}
-
-            exec_rec = self.repo.start_execution(
-                case_id=case_id,
-                capability_id="processor.file_chargeback",
-                capability_version="1.0.0",
-                effect_class="COMMIT",
-                idempotency_key=f"regE:{case_id}:chargeback",
+            processor_outcome = EffectEngine(self.session, self.page).execute_capability(
+                processor_capability,
+                {
+                    **common_effect_inputs,
+                    "card_last4": card_last4,
+                    "dispute_reason": "10.4 - Fraud / Unauthorized Transaction",
+                },
             )
-            self.repo.complete_execution(exec_rec.id, status="SUCCESS", audit_ref=f"CB-{case_id}")
-            self.transition(case_id, RegEState.CHARGEBACK_FILED)
+            failure = self._effect_failure(case_id, processor_outcome)
+            if failure:
+                return failure
+        self._ensure_reached(case_id, RegEState.CHARGEBACK_FILED)
 
         # -------------------------------------------------------------------
         # Step 5: Post Provisional Credit (COMMIT - MOVES MONEY)
@@ -276,46 +271,25 @@ class RegEWorkflow:
             engine = EffectEngine(session=self.session, page=self.page)
             outcome = engine.execute_capability(
                 capability=cap,
-                inputs={"member_id": member_id, "case_id": case_id, "amount": amount},
+                inputs=common_effect_inputs,
             )
 
             if outcome.code == OutcomeCode.POLICY_DENIED:
                 self.transition(case_id, RegEState.NEEDS_HUMAN)
                 return {"status": "POLICY_DENIED", "message": outcome.message}
 
-            if outcome.category == OutcomeCategory.NEEDS_HUMAN:
-                self.transition(case_id, RegEState.NEEDS_HUMAN)
-                return {
-                    "status": "NEEDS_HUMAN",
-                    "code": outcome.code.value,
-                    "message": outcome.message,
-                }
+            failure = self._effect_failure(case_id, outcome)
+            if failure:
+                return failure
 
-            if outcome.category == OutcomeCategory.UNCERTAIN_EFFECT:
-                self.transition(case_id, RegEState.UNCERTAIN_EFFECT)
-                return {
-                    "status": "UNCERTAIN_EFFECT",
-                    "code": outcome.code.value,
-                    "message": outcome.message,
-                }
+        # The credit is a durable target fact (either just confirmed or found
+        # applied during recovery); derive its projections idempotently.
+        obligation = self.repo.activate_obligation(case_id, "NOTICE_2_DAY")
+        self.repo.create_deadline(case_id, "NOTICE_2_DAY", due_at=obligation.due_at)
+        self._ensure_reached(case_id, RegEState.PROVISIONAL_CREDIT_POSTED, money_moved=True)
+        self.session.commit()
 
-            if outcome.category == OutcomeCategory.RECOVERABLE_FAILURE:
-                self.transition(case_id, RegEState.NEEDS_HUMAN)
-                return {
-                    "status": "RECOVERABLE_FAILURE",
-                    "code": outcome.code.value,
-                    "message": outcome.message,
-                }
-
-            if outcome.category == OutcomeCategory.HARD_FAILURE:
-                self.transition(case_id, RegEState.FAILED)
-                return {"status": "FAILED", "code": outcome.code.value, "message": outcome.message}
-
-            obligation = self.repo.activate_obligation(case_id, "NOTICE_2_DAY")
-            self.repo.create_deadline(case_id, "NOTICE_2_DAY", due_at=obligation.due_at)
-            self.transition(case_id, RegEState.PROVISIONAL_CREDIT_POSTED, money_moved=True)
-            self.session.commit()
-
+        if "core.post_provisional_credit" not in snapshot.completed_capabilities:
             # CRASH INJECTION HOOK: Simulate sudden process crash after money movement!
             if self.kill_after_credit:
                 self.repo.record_event(
@@ -335,41 +309,34 @@ class RegEWorkflow:
         # -------------------------------------------------------------------
         if "docs.send_notice" not in snapshot.completed_capabilities:
             maybe_crash("K_BEFORE_NOTICE")
-            self.transition(case_id, RegEState.NOTICE_PENDING)
+            self._ensure_reached(case_id, RegEState.NOTICE_PENDING)
             notice_deadline = add_business_days(clock, 2).strftime("%Y-%m-%d %H:%M:%S UTC")
 
-            resp = httpx.post(
-                f"{settings.documents_url}/notices/send",
-                data={
-                    "case_id": case_id,
-                    "member_id": member_id,
+            if not self.page:
+                raise RuntimeError("Execution page required for effect orchestration")
+            document_capability = load_capability_from_yaml(
+                "capabilities/documents/send_notice.yaml"
+            )
+            document_outcome = EffectEngine(self.session, self.page).execute_capability(
+                document_capability,
+                {
+                    **common_effect_inputs,
                     "notice_type": "REG_E_PROVISIONAL_CREDIT_DISCLOSURE",
-                    "amount": amount,
                     "deadline_due_at": notice_deadline,
                 },
-                timeout=5.0,
             )
-            if resp.status_code != 200:
-                self.transition(case_id, RegEState.NEEDS_HUMAN)
-                return {"status": "NEEDS_HUMAN", "error": "Notice delivery failed"}
-            maybe_crash("L_AFTER_NOTICE")
-
-            exec_rec = self.repo.start_execution(
-                case_id=case_id,
-                capability_id="docs.send_notice",
-                capability_version="1.0.0",
-                effect_class="COMMIT",
-                idempotency_key=f"regE:{case_id}:notice",
-            )
-            self.repo.complete_execution(exec_rec.id, status="SUCCESS", audit_ref=f"NOT-{case_id}")
-            self.repo.resolve_deadline(case_id, "NOTICE_2_DAY")
-            self.repo.satisfy_obligation(case_id, "NOTICE_2_DAY")
-            self.transition(case_id, RegEState.NOTICE_SENT)
+            failure = self._effect_failure(case_id, document_outcome)
+            if failure:
+                return failure
+        # The notice is a durable target fact; settle its projections idempotently.
+        self.repo.resolve_deadline(case_id, "NOTICE_2_DAY")
+        self.repo.satisfy_obligation(case_id, "NOTICE_2_DAY")
+        self._ensure_reached(case_id, RegEState.NOTICE_SENT)
 
         # -------------------------------------------------------------------
         # Step 7: Settle Case in Waiting Resolution
         # -------------------------------------------------------------------
-        self.transition(case_id, RegEState.WAITING_RESOLUTION)
+        self._ensure_reached(case_id, RegEState.WAITING_RESOLUTION)
         self.session.commit()
 
         final_snapshot = self.service.reconstruct_case_state(case_id)
@@ -380,3 +347,17 @@ class RegEWorkflow:
             "latest_memo_ref": final_snapshot.latest_memo_ref,
             "pending_deadlines_count": len(final_snapshot.pending_deadlines),
         }
+
+    def _effect_failure(self, case_id: str, outcome) -> Optional[Dict[str, Any]]:
+        if outcome.is_success or outcome.code == OutcomeCode.ALREADY_APPLIED:
+            return None
+        if outcome.category == OutcomeCategory.UNCERTAIN_EFFECT:
+            self.transition(case_id, RegEState.UNCERTAIN_EFFECT)
+            status = "UNCERTAIN_EFFECT"
+        elif outcome.category == OutcomeCategory.HARD_FAILURE:
+            self.transition(case_id, RegEState.FAILED)
+            status = "FAILED"
+        else:
+            self.transition(case_id, RegEState.NEEDS_HUMAN)
+            status = "NEEDS_HUMAN"
+        return {"status": status, "code": outcome.code.value, "message": outcome.message}

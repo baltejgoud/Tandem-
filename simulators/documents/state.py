@@ -24,6 +24,12 @@ class MemberNotice:
     deadline_due_at: str
     sent_at: str
     status: str = "SENT"
+    institution_id: str = "alpha"
+    procedure_id: str = "reg_e_dispute"
+    capability_id: str = "docs.send_notice"
+    account_id: str = ""
+    currency: str = "USD"
+    business_reference: str = ""
 
 
 class DocumentSystemState:
@@ -54,7 +60,13 @@ class DocumentSystemState:
                     amount TEXT NOT NULL,
                     deadline_due_at TEXT NOT NULL,
                     sent_at TEXT NOT NULL,
-                    status TEXT NOT NULL
+                    status TEXT NOT NULL,
+                    institution_id TEXT NOT NULL DEFAULT 'alpha',
+                    procedure_id TEXT NOT NULL DEFAULT 'reg_e_dispute',
+                    capability_id TEXT NOT NULL DEFAULT 'docs.send_notice',
+                    account_id TEXT NOT NULL DEFAULT '',
+                    currency TEXT NOT NULL DEFAULT 'USD',
+                    business_reference TEXT NOT NULL DEFAULT ''
                 );
                 CREATE TABLE IF NOT EXISTS effect_history (
                     sequence INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -65,6 +77,22 @@ class DocumentSystemState:
                 );
                 """
             )
+            self._ensure_columns(connection)
+
+    @staticmethod
+    def _ensure_columns(connection: sqlite3.Connection) -> None:
+        existing = {row["name"] for row in connection.execute("PRAGMA table_info(notices)")}
+        definitions = {
+            "institution_id": "TEXT NOT NULL DEFAULT 'alpha'",
+            "procedure_id": "TEXT NOT NULL DEFAULT 'reg_e_dispute'",
+            "capability_id": "TEXT NOT NULL DEFAULT 'docs.send_notice'",
+            "account_id": "TEXT NOT NULL DEFAULT ''",
+            "currency": "TEXT NOT NULL DEFAULT 'USD'",
+            "business_reference": "TEXT NOT NULL DEFAULT ''",
+        }
+        for name, definition in definitions.items():
+            if name not in existing:
+                connection.execute(f"ALTER TABLE notices ADD COLUMN {name} {definition}")
 
     @property
     def notices(self) -> Dict[str, MemberNotice]:
@@ -86,8 +114,15 @@ class DocumentSystemState:
         notice_type: str,
         amount: Decimal,
         deadline_due_at: str,
+        institution_id: str = "alpha",
+        procedure_id: str = "reg_e_dispute",
+        capability_id: str = "docs.send_notice",
+        account_id: str = "",
+        currency: str = "USD",
+        business_reference: str | None = None,
     ) -> MemberNotice:
         amount = parse_money(amount)
+        business_reference = business_reference or case_id
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             existing = connection.execute(
@@ -100,6 +135,10 @@ class DocumentSystemState:
                     or notice.notice_type != notice_type
                     or notice.amount != amount
                     or notice.deadline_due_at != deadline_due_at
+                    or notice.institution_id != institution_id
+                    or notice.account_id != account_id
+                    or notice.currency != currency
+                    or notice.business_reference != business_reference
                 ):
                     raise ValueError(f"Case {case_id} already has a different notice identity")
                 return notice
@@ -111,9 +150,19 @@ class DocumentSystemState:
                 amount=amount,
                 deadline_due_at=deadline_due_at,
                 sent_at=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+                institution_id=institution_id,
+                procedure_id=procedure_id,
+                capability_id=capability_id,
+                account_id=account_id,
+                currency=currency,
+                business_reference=business_reference,
             )
             connection.execute(
-                "INSERT INTO notices VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                """INSERT INTO notices
+                   (case_id, notice_id, member_id, notice_type, amount, deadline_due_at,
+                    sent_at, status, institution_id, procedure_id, capability_id,
+                    account_id, currency, business_reference)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     notice.case_id,
                     notice.notice_id,
@@ -123,6 +172,12 @@ class DocumentSystemState:
                     notice.deadline_due_at,
                     notice.sent_at,
                     notice.status,
+                    notice.institution_id,
+                    notice.procedure_id,
+                    notice.capability_id,
+                    notice.account_id,
+                    notice.currency,
+                    notice.business_reference,
                 ),
             )
             connection.execute(
@@ -158,6 +213,12 @@ class DocumentSystemState:
             deadline_due_at=row["deadline_due_at"],
             sent_at=row["sent_at"],
             status=row["status"],
+            institution_id=row["institution_id"],
+            procedure_id=row["procedure_id"],
+            capability_id=row["capability_id"],
+            account_id=row["account_id"],
+            currency=row["currency"],
+            business_reference=row["business_reference"] or row["case_id"],
         )
 
     def close(self) -> None:

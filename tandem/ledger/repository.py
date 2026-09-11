@@ -58,18 +58,25 @@ class LedgerRepository:
         currency: str = "USD",
         procedure_name: str = "reg_e_dispute",
     ) -> ProcedureCaseRecord:
+        # Two workers may open the same case concurrently; the unique primary
+        # key decides, never a SELECT-then-INSERT read.
+        now = datetime.now(timezone.utc)
+        insert_stmt = sqlite_insert(ProcedureCaseRecord).values(
+            case_id=case_id,
+            member_id=member_id,
+            amount=parse_money(amount),
+            currency=currency,
+            procedure_name=procedure_name,
+            status="RECEIVED",
+            money_moved=False,
+            opened_at=now,
+            updated_at=now,
+        )
+        self.session.execute(insert_stmt.on_conflict_do_nothing(index_elements=["case_id"]))
+        self.session.flush()
         case = self.get_case(case_id)
-        if not case:
-            case = ProcedureCaseRecord(
-                case_id=case_id,
-                member_id=member_id,
-                amount=parse_money(amount),
-                currency=currency,
-                procedure_name=procedure_name,
-                status="RECEIVED",
-            )
-            self.session.add(case)
-            self.session.flush()
+        if case is None:
+            raise RuntimeError(f"Case {case_id} could not be created or read")
         return case
 
     def update_case_status(
@@ -440,6 +447,8 @@ class LedgerRepository:
 
     def satisfy_obligation(self, case_id: str, obligation_type: str) -> ObligationRecord:
         obligation = self._get_obligation(case_id, obligation_type)
+        if obligation.status == "SATISFIED":
+            return obligation
         obligation.status = "SATISFIED"
         obligation.satisfied_at = datetime.now(timezone.utc)
         self.record_event(

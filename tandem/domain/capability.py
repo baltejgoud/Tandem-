@@ -21,6 +21,7 @@ class StepAction(str, Enum):
     ASSERT_CONTAINER = "ASSERT_CONTAINER"
     READ_TEXT = "READ_TEXT"
     SUBMIT = "SUBMIT"
+    HTTP_POST = "HTTP_POST"
 
 
 class StepDefinition(BaseModel):
@@ -127,10 +128,14 @@ class CapabilityDefinition(BaseModel):
                 )
             if not self.steps:
                 raise ValueError(f"COMMIT capability '{self.id}' must contain executable steps")
-            actuations = [step for step in self.steps if step.action == StepAction.SUBMIT]
+            actuations = [
+                step
+                for step in self.steps
+                if step.action in {StepAction.SUBMIT, StepAction.HTTP_POST}
+            ]
             if not actuations:
                 raise ValueError(
-                    f"COMMIT capability '{self.id}' must declare a SUBMIT actuation"
+                    f"COMMIT capability '{self.id}' must declare a SUBMIT or HTTP_POST actuation"
                 )
             for actuation in actuations:
                 if actuation.guard_ref != self.scoped_guard.guard_id:

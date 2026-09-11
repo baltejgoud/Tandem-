@@ -45,6 +45,13 @@ async def api_get_notice(case_id: str):
         "deadline_due_at": notice.deadline_due_at,
         "sent_at": notice.sent_at,
         "status": notice.status,
+        "institution_id": notice.institution_id,
+        "procedure_id": notice.procedure_id,
+        "capability_id": notice.capability_id,
+        "account_id": notice.account_id,
+        "currency": notice.currency,
+        "business_reference": notice.business_reference,
+        "effect_count": document_state.effect_count(case_id),
     }
 
 
@@ -105,6 +112,12 @@ async def send_notice(
     notice_type: str = Form(...),
     amount: Decimal = Form(...),
     deadline_due_at: str = Form(...),
+    institution_id: str = Form("alpha"),
+    procedure_id: str = Form("reg_e_dispute"),
+    capability_id: str = Form("docs.send_notice"),
+    account_id: str = Form(""),
+    currency: str = Form("USD"),
+    business_reference: str = Form(""),
 ):
     if document_state.simulate_failure:
         raise HTTPException(
@@ -118,6 +131,12 @@ async def send_notice(
         notice_type=notice_type,
         amount=amount,
         deadline_due_at=deadline_due_at,
+        institution_id=institution_id,
+        procedure_id=procedure_id,
+        capability_id=capability_id,
+        account_id=account_id,
+        currency=currency,
+        business_reference=business_reference or case_id,
     )
 
     return HTMLResponse(f"""<!DOCTYPE html>
