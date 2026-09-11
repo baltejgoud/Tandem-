@@ -124,23 +124,31 @@ class DeterministicExecutor:
                     f"Replay must be 100% deterministic."
                 )
 
-            # Extract receipt details from page/frame
-            frame = self.page.frame_locator(frame_selector)
+            context_el = self.surface._get_context(frame_selector)
             memo_code = None
             try:
-                memo_el = frame.locator("#receipt_memo_code, .result-memo-code").first
-                if memo_el.is_visible(timeout=1000):
+                memo_el = context_el.locator("#receipt_memo_code, .result-memo-code").first
+                if memo_el.is_visible(timeout=2000):
                     memo_code = memo_el.text_content().strip()
             except Exception:
                 pass
 
             money_moved = False
             try:
-                money_el = frame.locator("#receipt_money_moved").first
-                if money_el.is_visible(timeout=500):
+                money_el = context_el.locator("#receipt_money_moved").first
+                if money_el.is_visible(timeout=1000):
                     money_moved = "MONEY_MOVED=TRUE" in (money_el.text_content() or "")
             except Exception:
                 pass
+
+            # Fallback to postcheck verification if DOM extraction was transient
+            if not memo_code and capability.effect.postcheck:
+                from tandem.replay.postcheck import execute_postcheck
+
+                pc = execute_postcheck(capability, inputs)
+                if pc and pc.audit_ref:
+                    memo_code = pc.audit_ref
+                    money_moved = pc.money_moved
 
             return ExecutionOutcome(
                 category=OutcomeCategory.SUCCESS,
