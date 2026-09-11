@@ -100,7 +100,7 @@ def run_replay_new_case():
     llm_tracker.reset()
 
     cap = load_capability_from_yaml("capabilities/core/post_provisional_credit.yaml")
-    case_id = "D-REPLAY-2001"
+    case_id = f"D-REPLAY-{int(time.time())}"
     inputs = {"member_id": "8830142", "case_id": case_id, "amount": 175.50}
 
     with sync_playwright() as p:
@@ -131,7 +131,7 @@ def run_replay_same_case():
     llm_tracker.reset()
 
     cap = load_capability_from_yaml("capabilities/core/post_provisional_credit.yaml")
-    case_id = "D-IDEMPOTENT-3001"
+    case_id = f"D-IDEMPOTENT-{int(time.time())}"
     inputs = {"member_id": "8830142", "case_id": case_id, "amount": 210.00}
 
     db = SessionLocal()
@@ -215,7 +215,7 @@ def run_crash_resume():
     reset_all_simulators()
     llm_tracker.reset()
 
-    case_id = "D-CRASH-DEMO"
+    case_id = f"D-CRASH-{int(time.time())}"
     member_id = "8830142"
     amount = 310.00
 
@@ -283,7 +283,7 @@ def run_human_handoff():
     core_bank_state.require_compliance_interstitial = True
     core_bank_state.compliance_cleared = False
 
-    case_id = "D-HANDOFF-DEMO"
+    case_id = f"D-HANDOFF-{int(time.time())}"
     member_id = "8830142"
     amount = 250.00
 
@@ -395,7 +395,7 @@ def run_uncertain_effect():
         browser = p.chromium.launch(headless=True)
         page = browser.new_page()
         wf = RegEWorkflow(session=db, page=page)
-        res_a = wf.run_case(case_id="D-RECON-8001", member_id="8830142", amount=195.00)
+        res_a = wf.run_case(case_id=f"D-RECON-{int(time.time())}", member_id="8830142", amount=195.00)
         browser.close()
 
     print(f"    Part A Result: Reconciled via postcheck inquiry -> Status '{res_a['state']}'")
@@ -420,7 +420,7 @@ def run_uncertain_effect():
         ):
             outcome = engine.execute_capability(
                 capability=cap,
-                inputs={"member_id": "8830142", "case_id": "D-UNCERTAIN-8002", "amount": 215.00},
+                inputs={"member_id": "8830142", "case_id": f"D-UNCERTAIN-{int(time.time())}", "amount": 215.00},
             )
         browser.close()
 
