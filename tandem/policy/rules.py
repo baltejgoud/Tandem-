@@ -1,12 +1,14 @@
 """Declarative policy definitions and bounds validation."""
 
+from decimal import Decimal
 from typing import Any, Dict
 
 from tandem.domain.capability import CapabilityDefinition
 from tandem.domain.effects import EffectClass
 from tandem.domain.errors import PolicyViolationError
+from tandem.domain.money import parse_money
 
-MAX_AUTOMATED_CREDIT_AMOUNT = 500.00
+MAX_AUTOMATED_CREDIT_AMOUNT = Decimal("500.00")
 PERMITTED_CURRENCIES = {"USD"}
 
 
@@ -19,9 +21,11 @@ def validate_policy(capability: CapabilityDefinition, inputs: Dict[str, Any]) ->
         # 1. Amount bound validation
         if "amount" in inputs:
             try:
-                amt = float(inputs["amount"])
-            except (ValueError, TypeError):
-                raise PolicyViolationError(f"Invalid monetary amount format: {inputs['amount']}")
+                amt = parse_money(inputs["amount"])
+            except (ValueError, TypeError) as exc:
+                raise PolicyViolationError(
+                    f"Invalid monetary amount format: {inputs['amount']}"
+                ) from exc
 
             max_bound = (
                 capability.effect.bounds.max_amount

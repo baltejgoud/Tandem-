@@ -2,6 +2,7 @@
 
 import json
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy import select
@@ -16,6 +17,7 @@ from tandem.ledger.models import (
     ProcedureCaseRecord,
     ProcedureEventRecord,
 )
+from tandem.domain.money import parse_money
 
 
 class LedgerRepository:
@@ -35,7 +37,7 @@ class LedgerRepository:
         self,
         case_id: str,
         member_id: str,
-        amount: float = 0.0,
+        amount: Decimal = Decimal("0.00"),
         currency: str = "USD",
         procedure_name: str = "reg_e_dispute",
     ) -> ProcedureCaseRecord:
@@ -44,7 +46,7 @@ class LedgerRepository:
             case = ProcedureCaseRecord(
                 case_id=case_id,
                 member_id=member_id,
-                amount=amount,
+                amount=parse_money(amount),
                 currency=currency,
                 procedure_name=procedure_name,
                 status="RECEIVED",
@@ -82,7 +84,7 @@ class LedgerRepository:
             event_type=event_type,
             step_name=step_name,
             actor=actor,
-            payload=json.dumps(payload) if payload else None,
+            payload=json.dumps(payload, default=str, sort_keys=True) if payload else None,
             timestamp=datetime.now(timezone.utc),
         )
         self.session.add(event)
@@ -108,7 +110,7 @@ class LedgerRepository:
         effect_class: str,
         idempotency_key: Optional[str] = None,
         expected_entity: Optional[str] = None,
-        expected_amount: Optional[float] = None,
+        expected_amount: Optional[Decimal] = None,
         actor: str = "AUTOMATION",
         browser_session_id: Optional[str] = None,
     ) -> CapabilityExecutionRecord:
@@ -120,7 +122,7 @@ class LedgerRepository:
             idempotency_key=idempotency_key,
             status="RUNNING",
             expected_entity=expected_entity,
-            expected_amount=expected_amount,
+            expected_amount=parse_money(expected_amount) if expected_amount is not None else None,
             actor=actor,
             browser_session_id=browser_session_id,
             started_at=datetime.now(timezone.utc),
@@ -134,7 +136,7 @@ class LedgerRepository:
         execution_id: int,
         status: str,
         observed_entity: Optional[str] = None,
-        observed_amount: Optional[float] = None,
+        observed_amount: Optional[Decimal] = None,
         failure_category: Optional[str] = None,
         audit_ref: Optional[str] = None,
         money_moved: bool = False,
@@ -146,7 +148,9 @@ class LedgerRepository:
 
         record.status = status
         record.observed_entity = observed_entity
-        record.observed_amount = observed_amount
+        record.observed_amount = (
+            parse_money(observed_amount) if observed_amount is not None else None
+        )
         record.failure_category = failure_category
         record.audit_ref = audit_ref
         record.money_moved = money_moved

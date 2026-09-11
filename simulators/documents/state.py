@@ -3,7 +3,10 @@
 import random
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Dict, Optional
+
+from tandem.domain.money import parse_money
 
 
 @dataclass
@@ -12,7 +15,7 @@ class MemberNotice:
     case_id: str
     member_id: str
     notice_type: str
-    amount: float
+    amount: Decimal
     deadline_due_at: str
     sent_at: str
     status: str = "SENT"
@@ -34,9 +37,10 @@ class DocumentSystemState:
         case_id: str,
         member_id: str,
         notice_type: str,
-        amount: float,
+        amount: Decimal,
         deadline_due_at: str,
     ) -> MemberNotice:
+        amount = parse_money(amount)
         notice = MemberNotice(
             notice_id=f"NOT-{random.randint(1000, 9999)}",
             case_id=case_id,

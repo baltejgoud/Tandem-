@@ -13,6 +13,7 @@ from tandem.domain.errors import (
     SessionExpiredError,
 )
 from tandem.domain.outcomes import ExecutionOutcome, OutcomeCategory, OutcomeCode
+from tandem.domain.money import parse_money
 from tandem.policy.telemetry import llm_tracker
 from tandem.surfaces.base import SurfaceOverlay
 from tandem.surfaces.playwright_surface import PlaywrightSurface
@@ -93,10 +94,10 @@ class DeterministicExecutor:
                             expected_amt_str = render_template(
                                 guard.expected_amount_template, context
                             )
-                            expected_amt = float(expected_amt_str)
+                            expected_amt = parse_money(expected_amt_str)
                             if (
                                 observed.observed_amount is not None
-                                and abs(observed.observed_amount - expected_amt) > 0.001
+                                and observed.observed_amount != expected_amt
                             ):
                                 raise AmountMismatchError(
                                     f"Control-scoped guard failed: expected amount {expected_amt:.2f} "

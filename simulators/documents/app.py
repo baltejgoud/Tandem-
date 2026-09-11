@@ -8,6 +8,7 @@ Implements:
 """
 
 import html
+from decimal import Decimal
 from typing import Optional
 
 from fastapi import FastAPI, Form, HTTPException, Query
@@ -102,7 +103,7 @@ async def send_notice(
     case_id: str = Form(...),
     member_id: str = Form(...),
     notice_type: str = Form(...),
-    amount: float = Form(...),
+    amount: Decimal = Form(...),
     deadline_due_at: str = Form(...),
 ):
     if document_state.simulate_failure:

@@ -117,18 +117,19 @@ def test_guard_contract_requires_currency_binding() -> None:
 @pytest.mark.parametrize("bad_value", ["NaN", "Infinity", "-Infinity"])
 def test_non_finite_money_is_rejected_at_input_boundary(bad_value: str) -> None:
     capability = load_capability_from_yaml(str(ARTIFACT))
-    with pytest.raises((ValueError, ValidationError)):
-        PolicyEngine.evaluate(
-            capability,
-            {
-                "institution_id": "alpha",
-                "member_id": "8830142",
-                "account_id": "CHK-8830142-01",
-                "case_id": "D-NON-FINITE",
-                "amount": bad_value,
-                "currency": "USD",
-            },
-        )
+    outcome = PolicyEngine.evaluate(
+        capability,
+        {
+            "institution_id": "alpha",
+            "member_id": "8830142",
+            "account_id": "CHK-8830142-01",
+            "case_id": "D-NON-FINITE",
+            "amount": bad_value,
+            "currency": "USD",
+        },
+    )
+    assert outcome is not None
+    assert outcome.code in {OutcomeCode.POLICY_DENIED, OutcomeCode.POLICY_VIOLATION}
 
 
 @pytest.mark.parametrize(
@@ -192,4 +193,3 @@ def test_institution_routing_is_not_embedded_in_immutable_artifact() -> None:
     assert navigation_steps
     assert all("127.0.0.1" not in step.semantic_target for step in navigation_steps)
     assert "supported_surfaces" in CapabilityDefinition.model_fields
-

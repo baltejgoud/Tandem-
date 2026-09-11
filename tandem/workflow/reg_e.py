@@ -2,6 +2,7 @@
 
 import os
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Any, Dict, Optional
 
 import httpx
@@ -11,6 +12,7 @@ from sqlalchemy.orm import Session
 from tandem.config import settings
 from tandem.domain.capability import load_capability_from_yaml
 from tandem.domain.outcomes import OutcomeCategory, OutcomeCode
+from tandem.domain.money import parse_money
 from tandem.ledger.repository import LedgerRepository
 from tandem.ledger.service import LedgerService
 from tandem.replay.engine import EffectEngine
@@ -56,12 +58,13 @@ class RegEWorkflow:
         self,
         case_id: str,
         member_id: str,
-        amount: float,
+        amount: Decimal,
         card_last4: str = "4112",
         injected_clock: Optional[datetime] = None,
     ) -> Dict[str, Any]:
         """Execute full Reg E dispute processing or resume from persistent ledger."""
         clock = injected_clock or datetime.now(timezone.utc)
+        amount = parse_money(amount)
 
         # 0. Check if case already exists in ledger
         existing_case = self.repo.get_case(case_id)

@@ -1,9 +1,10 @@
 """SQLAlchemy 2.x relational models for the append-only procedure ledger."""
 
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Numeric, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -19,7 +20,7 @@ class ProcedureCaseRecord(Base):
     case_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     member_id: Mapped[str] = mapped_column(String(64), index=True)
     procedure_name: Mapped[str] = mapped_column(String(64), default="reg_e_dispute")
-    amount: Mapped[float] = mapped_column(Float, default=0.0)
+    amount: Mapped[Decimal] = mapped_column(Numeric(24, 2), default=Decimal("0.00"))
     currency: Mapped[str] = mapped_column(String(8), default="USD")
     status: Mapped[str] = mapped_column(String(64), default="RECEIVED")
     money_moved: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -81,8 +82,8 @@ class CapabilityExecutionRecord(Base):
     )  # RUNNING, SUCCESS, BUSINESS_OUTCOME, FAILED, etc.
     expected_entity: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     observed_entity: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
-    expected_amount: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    observed_amount: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    expected_amount: Mapped[Optional[Decimal]] = mapped_column(Numeric(24, 2), nullable=True)
+    observed_amount: Mapped[Optional[Decimal]] = mapped_column(Numeric(24, 2), nullable=True)
 
     failure_category: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     audit_ref: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
