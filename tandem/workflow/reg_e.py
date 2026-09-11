@@ -143,9 +143,46 @@ class RegEWorkflow:
                 self.transition(case_id, RegEState.NEEDS_HUMAN)
                 return {"status": "NEEDS_HUMAN", "error": "Processor session expired"}
             elif resp.status_code == 504:
-                # Uncertain effect
-                self.transition(case_id, RegEState.UNCERTAIN_EFFECT)
-                return {"status": "UNCERTAIN_EFFECT", "error": "Processor timeout dropped"}
+                # Interrupted request -> run postcheck reconciliation inquiry!
+                try:
+                    inquiry = httpx.get(
+                        f"{settings.processor_url}/api/chargebacks/{case_id}", timeout=3.0
+                    )
+                    if inquiry.status_code == 200:
+                        data = inquiry.json()
+                        network_ref = data.get("network_ref", f"CB-{case_id}")
+                        exec_rec = self.repo.start_execution(
+                            case_id=case_id,
+                            capability_id="processor.file_chargeback",
+                            capability_version="1.0.0",
+                            effect_class="COMMIT",
+                            idempotency_key=f"regE:{case_id}:chargeback",
+                        )
+                        self.repo.complete_execution(
+                            exec_rec.id, status="SUCCESS", audit_ref=network_ref
+                        )
+                        self.repo.record_event(
+                            case_id=case_id,
+                            event_type="EFFECT_RECONCILED",
+                            step_name="processor.file_chargeback",
+                            payload={"network_ref": network_ref, "message": "Reconciled after 504"},
+                        )
+                        self.transition(case_id, RegEState.CHARGEBACK_FILED)
+                    else:
+                        # Postcheck inconclusive -> UNCERTAIN_EFFECT!
+                        self.transition(case_id, RegEState.UNCERTAIN_EFFECT)
+                        return {
+                            "status": "UNCERTAIN_EFFECT",
+                            "code": "UNCERTAIN_EFFECT",
+                            "error": "Processor timeout dropped; postcheck inquiry inconclusive",
+                        }
+                except Exception:
+                    self.transition(case_id, RegEState.UNCERTAIN_EFFECT)
+                    return {
+                        "status": "UNCERTAIN_EFFECT",
+                        "code": "UNCERTAIN_EFFECT",
+                        "error": "Processor timeout dropped; postcheck inquiry failed",
+                    }
             elif resp.status_code != 200:
                 self.transition(case_id, RegEState.FAILED)
                 return {"status": "FAILED", "error": "Processor chargeback failed"}
