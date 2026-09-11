@@ -1,0 +1,173 @@
+"""Process-boundary contracts for claims, ownership, and obligations."""
+
+from __future__ import annotations
+
+import multiprocessing
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal
+from pathlib import Path
+
+from tandem.ledger.database import get_engine, get_session_factory, init_db
+from tandem.ledger.repository import LedgerRepository
+
+
+def _identity(case_id: str):
+    from tandem.domain.identity import EffectIdentity
+
+    return EffectIdentity(
+        institution_id="alpha",
+        procedure_id="reg_e_dispute",
+        case_id=case_id,
+        capability_id="core.post_provisional_credit",
+        member_id="8830142",
+        account_id="CHK-8830142-01",
+        amount=Decimal("340.00"),
+        currency="USD",
+        business_reference=case_id,
+    )
+
+
+def _claim_worker(db_path: str, barrier, queue, owner_id: str) -> None:
+    engine = get_engine(db_path)
+    factory = get_session_factory(engine)
+    try:
+        barrier.wait(timeout=10)
+        with factory() as session:
+            claim = LedgerRepository(session).claim_effect(_identity("D-PROCESS-RACE"), owner_id)
+            session.commit()
+            queue.put((claim.acquired, claim.status, claim.fencing_token))
+    finally:
+        engine.dispose()
+
+
+def _human_claim_worker(db_path: str, barrier, queue, owner_id: str) -> None:
+    engine = get_engine(db_path)
+    factory = get_session_factory(engine)
+    try:
+        barrier.wait(timeout=10)
+        with factory() as session:
+            lease = LedgerRepository(session).acquire_lease(
+                "D-HUMAN-RACE", owner_id, owner_type="HUMAN"
+            )
+            session.commit()
+            queue.put((True, lease.owner_id, lease.fencing_token))
+    except Exception as exc:  # Result is asserted by the parent process.
+        queue.put((False, type(exc).__name__, 0))
+    finally:
+        engine.dispose()
+
+
+def test_atomic_effect_claim_across_processes(tmp_path: Path) -> None:
+    db_path = str(tmp_path / "effect-claim.db")
+    engine = get_engine(db_path)
+    init_db(engine)
+    engine.dispose()
+
+    context = multiprocessing.get_context("spawn")
+    barrier = context.Barrier(2)
+    queue = context.Queue()
+    workers = [
+        context.Process(target=_claim_worker, args=(db_path, barrier, queue, f"worker-{i}"))
+        for i in range(2)
+    ]
+    for worker in workers:
+        worker.start()
+    for worker in workers:
+        worker.join(timeout=20)
+        assert worker.exitcode == 0
+
+    results = [queue.get(timeout=2) for _ in workers]
+    assert sum(acquired for acquired, _status, _token in results) == 1
+    assert len({token for _acquired, _status, token in results if token}) == 1
+
+
+def test_atomic_human_lease_across_processes(tmp_path: Path) -> None:
+    db_path = str(tmp_path / "human-lease.db")
+    engine = get_engine(db_path)
+    init_db(engine)
+    factory = get_session_factory(engine)
+    with factory() as session:
+        LedgerRepository(session).create_or_get_case(
+            "D-HUMAN-RACE", "8830142", Decimal("340.00")
+        )
+        session.commit()
+    engine.dispose()
+
+    context = multiprocessing.get_context("spawn")
+    barrier = context.Barrier(2)
+    queue = context.Queue()
+    workers = [
+        context.Process(
+            target=_human_claim_worker,
+            args=(db_path, barrier, queue, f"operator-{i}"),
+        )
+        for i in range(2)
+    ]
+    for worker in workers:
+        worker.start()
+    for worker in workers:
+        worker.join(timeout=20)
+        assert worker.exitcode == 0
+
+    results = [queue.get(timeout=2) for _ in workers]
+    assert sum(success for success, _owner, _token in results) == 1
+
+
+def test_stale_lease_recovery_fences_old_owner(tmp_path: Path) -> None:
+    engine = get_engine(str(tmp_path / "stale-lease.db"))
+    init_db(engine)
+    factory = get_session_factory(engine)
+    now = datetime(2026, 9, 11, 12, 0, tzinfo=timezone.utc)
+    with factory() as session:
+        repo = LedgerRepository(session)
+        repo.create_or_get_case("D-STALE", "8830142", Decimal("340.00"))
+        old = repo.acquire_lease(
+            "D-STALE",
+            "worker-old",
+            owner_type="AUTOMATION",
+            now=now,
+            ttl=timedelta(seconds=1),
+        )
+        session.commit()
+        old_token = old.fencing_token
+
+    with factory() as session:
+        repo = LedgerRepository(session)
+        new = repo.acquire_lease(
+            "D-STALE",
+            "worker-new",
+            owner_type="AUTOMATION",
+            now=now + timedelta(seconds=2),
+        )
+        session.commit()
+        assert new.fencing_token > old_token
+        assert not repo.validate_lease_token("D-STALE", "worker-old", old_token)
+        assert repo.validate_lease_token("D-STALE", "worker-new", new.fencing_token)
+
+
+def test_obligation_is_durable_before_effect_claim(tmp_path: Path) -> None:
+    engine = get_engine(str(tmp_path / "obligation.db"))
+    init_db(engine)
+    factory = get_session_factory(engine)
+    with factory() as session:
+        repo = LedgerRepository(session)
+        repo.create_or_get_case("D-OBLIGATION", "8830142", Decimal("340.00"))
+        repo.create_obligation(
+            "D-OBLIGATION",
+            "NOTICE_2_DAY",
+            datetime(2026, 9, 15, 17, 0, tzinfo=timezone.utc),
+        )
+        repo.claim_effect(_identity("D-OBLIGATION"), "worker-1")
+        session.commit()
+
+    engine.dispose()
+    reopened = get_engine(str(tmp_path / "obligation.db"))
+    reopened_factory = get_session_factory(reopened)
+    with reopened_factory() as session:
+        repo = LedgerRepository(session)
+        obligations = repo.get_obligations_for_case("D-OBLIGATION")
+        events = repo.get_events_for_case("D-OBLIGATION")
+        assert len(obligations) == 1
+        assert obligations[0].status == "PLANNED"
+        event_types = [event.event_type for event in events]
+        assert event_types.index("OBLIGATION_CREATED") < event_types.index("EFFECT_CLAIMED")
