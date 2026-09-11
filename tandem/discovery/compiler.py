@@ -29,6 +29,7 @@ from tandem.domain.effects import (
     EffectSpec,
     PostcheckSpec,
     PrecheckSpec,
+    ReconciliationSpec,
 )
 
 
@@ -49,10 +50,11 @@ class CapabilityCompiler:
         for action in trace.actions:
             step_dict = {
                 "step_id": action.step_id,
-                "action": action.action,
+                "action": "SUBMIT" if action.is_mutating else action.action,
                 "semantic_target": action.semantic_target,
                 "locator_candidates": action.locator_candidates,
                 "frame_selector": action.frame_selector,
+                "guard_ref": action.guard_ref,
             }
 
             if action.action == "FILL" and action.input_name:
@@ -85,11 +87,16 @@ class CapabilityCompiler:
                 params={"case_id": "{{input.case_id}}"},
                 expected_status="CONFIRMED",
             ),
+            reconciliation=ReconciliationSpec(
+                strategy="POSTCHECK_OR_UNCERTAIN",
+                max_inquiry_attempts=2,
+            ),
             compensation="core.reverse_provisional_credit",
             bounds=BoundsSpec(max_amount=500.00, currency="USD"),
         )
 
         scoped_guard = ScopedGuardSpec(
+            guard_id="primary_commit_guard",
             container_selector="#credit_action_container, .confirm-panel",
             expected_institution_template="{{input.institution_id}}",
             expected_member_template="{{input.member_id}}",

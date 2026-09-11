@@ -20,6 +20,7 @@ from tandem.domain.effects import (
     EffectSpec,
     PostcheckSpec,
     PrecheckSpec,
+    ReconciliationSpec,
 )
 from tandem.domain.errors import EntityBindingMismatchError
 from tandem.domain.outcomes import OutcomeCategory, OutcomeCode
@@ -138,14 +139,25 @@ def test_control_scoped_guard_detects_transposed_member_in_container():
             ),
             precheck=PrecheckSpec(capability="core.find"),
             postcheck=PostcheckSpec(capability="core.find"),
+            reconciliation=ReconciliationSpec(),
             bounds=BoundsSpec(max_amount=500.0),
         ),
         input_schema={"type": "object"},
         scoped_guard=ScopedGuardSpec(
+            guard_id="test_commit_guard",
             container_selector=".confirm-panel, div[id^='commit_scope_container']",
             expected_member_template="{{input.member_id}}",
             expected_amount_template="{{input.amount}}",
         ),
+        steps=[
+            StepDefinition(
+                step_id="step_commit",
+                action=StepAction.SUBMIT,
+                semantic_target="Test actuation",
+                locator_candidates=[".btn-commit-final"],
+                guard_ref="test_commit_guard",
+            )
+        ],
     )
 
     with sync_playwright() as p:
@@ -198,10 +210,12 @@ def test_executor_halts_on_transposed_member():
             ),
             precheck=PrecheckSpec(capability="core.find"),
             postcheck=PostcheckSpec(capability="core.find"),
+            reconciliation=ReconciliationSpec(),
             bounds=BoundsSpec(max_amount=500.0),
         ),
         input_schema={"type": "object"},
         scoped_guard=ScopedGuardSpec(
+            guard_id="test_commit_guard",
             container_selector="#commit_scope_container, .confirm-panel",
             expected_member_template="{{input.member_id}}",
             expected_amount_template="{{input.amount}}",
@@ -209,9 +223,10 @@ def test_executor_halts_on_transposed_member():
         steps=[
             StepDefinition(
                 step_id="step_commit",
-                action=StepAction.CLICK,
-                semantic_target="Commit Button",
+                action=StepAction.SUBMIT,
+                semantic_target="Arbitrary human label",
                 locator_candidates=[".btn-commit-final"],
+                guard_ref="test_commit_guard",
             )
         ],
     )

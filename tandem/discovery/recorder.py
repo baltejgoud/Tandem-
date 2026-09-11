@@ -6,6 +6,7 @@ and container scopes during exploratory UI interactions.
 
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
+
 from pydantic import BaseModel, Field
 
 
@@ -22,6 +23,8 @@ class ActionTrace(BaseModel):
     concrete_value: Optional[str] = None
     container_selector: Optional[str] = None
     observed_text: Optional[str] = None
+    is_mutating: bool = False
+    guard_ref: Optional[str] = None
     timestamp: str = Field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat()
     )
@@ -104,6 +107,8 @@ class TraceRecorder:
         locator_candidates: Optional[List[str]] = None,
         container_selector: Optional[str] = None,
         observed_text: Optional[str] = None,
+        is_mutating: bool = False,
+        guard_ref: Optional[str] = None,
     ) -> ActionTrace:
         self._step_counter += 1
         candidates = list(locator_candidates or [selector])
@@ -120,6 +125,8 @@ class TraceRecorder:
             frame_selector=frame_selector,
             container_selector=container_selector,
             observed_text=observed_text,
+            is_mutating=is_mutating,
+            guard_ref=guard_ref,
         )
         self.actions.append(trace)
         return trace

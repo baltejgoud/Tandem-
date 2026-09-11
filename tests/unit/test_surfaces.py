@@ -29,7 +29,7 @@ def test_overlay_registry():
 
     beta = get_overlay("core_bank_beta")
     assert beta is not None
-    assert "Commit Button" in beta.selector_overrides
+    assert "Final external credit actuation" in beta.selector_overrides
 
     custom = SurfaceOverlay(institution_id="custom_bank", name="Custom Bank")
     register_overlay(custom)

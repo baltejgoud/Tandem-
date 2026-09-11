@@ -20,6 +20,7 @@ class StepAction(str, Enum):
     WAIT_FOR = "WAIT_FOR"
     ASSERT_CONTAINER = "ASSERT_CONTAINER"
     READ_TEXT = "READ_TEXT"
+    SUBMIT = "SUBMIT"
 
 
 class StepDefinition(BaseModel):
@@ -43,6 +44,10 @@ class StepDefinition(BaseModel):
     frame_selector: Optional[str] = Field(
         default=None, description="Selector of parent iframe if nested inside a frame"
     )
+    guard_ref: Optional[str] = Field(
+        default=None,
+        description="Required structural reference for an irreversible SUBMIT actuation",
+    )
 
 
 class ScopedGuardSpec(BaseModel):
@@ -50,6 +55,11 @@ class ScopedGuardSpec(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    guard_id: str = Field(
+        default="primary_commit_guard",
+        min_length=1,
+        description="Stable identifier referenced by protected actuation steps",
+    )
     container_selector: str = Field(
         description="Selector for the enclosing row, card, or panel holding the submit control"
     )
@@ -109,13 +119,25 @@ class CapabilityDefinition(BaseModel):
 
     @model_validator(mode="after")
     def validate_capability_safety(self) -> "CapabilityDefinition":
-        # COMMIT capabilities MUST have a scoped guard!
         if self.effect.effect_class == EffectClass.COMMIT:
             if not self.scoped_guard:
                 raise ValueError(
                     f"Capability '{self.id}' has COMMIT effect but lacks a scoped_guard. "
                     f"All COMMIT operations require container-scoped identity verification."
                 )
+            if not self.steps:
+                raise ValueError(f"COMMIT capability '{self.id}' must contain executable steps")
+            actuations = [step for step in self.steps if step.action == StepAction.SUBMIT]
+            if not actuations:
+                raise ValueError(
+                    f"COMMIT capability '{self.id}' must declare a SUBMIT actuation"
+                )
+            for actuation in actuations:
+                if actuation.guard_ref != self.scoped_guard.guard_id:
+                    raise ValueError(
+                        f"COMMIT actuation '{actuation.step_id}' must reference guard "
+                        f"'{self.scoped_guard.guard_id}'"
+                    )
         return self
 
     def compute_hash(self) -> str:

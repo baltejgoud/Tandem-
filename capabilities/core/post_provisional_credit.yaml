@@ -27,6 +27,9 @@ effect:
     params:
       case_id: "{{input.case_id}}"
     expected_status: "CONFIRMED"
+  reconciliation:
+    strategy: "POSTCHECK_OR_UNCERTAIN"
+    max_inquiry_attempts: 2
   compensation: "core.reverse_provisional_credit"
   bounds:
     max_amount: 500.00
@@ -51,6 +54,7 @@ input_schema:
   required: ["institution_id", "member_id", "account_id", "case_id", "amount", "currency"]
 
 scoped_guard:
+  guard_id: "primary_commit_guard"
   container_selector: "#credit_action_container, .confirm-panel"
   expected_institution_template: "{{input.institution_id}}"
   expected_member_template: "{{input.member_id}}"
@@ -115,10 +119,11 @@ steps:
     frame_selector: "#core_workspace_frame"
 
   - step_id: "step_scoped_guard_and_commit"
-    action: "CLICK"
-    semantic_target: "Commit Button"
+    action: "SUBMIT"
+    semantic_target: "Final external credit actuation"
     locator_candidates:
       - "button.btn-commit-final"
       - "#btn_commit_credit"
       - "text=POST PROVISIONAL CREDIT NOW"
     frame_selector: "#core_workspace_frame"
+    guard_ref: "primary_commit_guard"
