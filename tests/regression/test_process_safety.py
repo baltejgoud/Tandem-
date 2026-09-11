@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import multiprocessing
+import sqlite3
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -57,6 +58,56 @@ def _human_claim_worker(db_path: str, barrier, queue, owner_id: str) -> None:
         engine.dispose()
 
 
+def _target_effect_worker(
+    ledger_path: str,
+    target_path: str,
+    case_id: str,
+    barrier,
+    queue,
+    owner_id: str,
+) -> None:
+    from tandem.domain.effects import EffectClaimStatus
+
+    engine = get_engine(ledger_path)
+    factory = get_session_factory(engine)
+    try:
+        barrier.wait(timeout=10)
+        with factory() as session:
+            repo = LedgerRepository(session)
+            identity = _identity(case_id)
+            claim = repo.claim_effect(identity, owner_id)
+            session.commit()
+            if not claim.acquired:
+                queue.put(claim.status)
+                return
+
+            assert repo.transition_effect_claim(
+                identity.idempotency_key,
+                owner_id,
+                claim.fencing_token,
+                {EffectClaimStatus.CLAIMED},
+                EffectClaimStatus.APPLYING,
+            )
+            session.commit()
+            with sqlite3.connect(target_path, timeout=30) as target:
+                target.execute(
+                    "INSERT INTO effects(case_id, idempotency_key, owner_id) VALUES (?, ?, ?)",
+                    (case_id, identity.idempotency_key, owner_id),
+                )
+                target.commit()
+            assert repo.transition_effect_claim(
+                identity.idempotency_key,
+                owner_id,
+                claim.fencing_token,
+                {EffectClaimStatus.APPLYING},
+                EffectClaimStatus.APPLIED,
+            )
+            session.commit()
+            queue.put("SUCCESS")
+    finally:
+        engine.dispose()
+
+
 def test_atomic_effect_claim_across_processes(tmp_path: Path) -> None:
     db_path = str(tmp_path / "effect-claim.db")
     engine = get_engine(db_path)
@@ -79,6 +130,54 @@ def test_atomic_effect_claim_across_processes(tmp_path: Path) -> None:
     results = [queue.get(timeout=2) for _ in workers]
     assert sum(acquired for acquired, _status, _token in results) == 1
     assert len({token for _acquired, _status, token in results if token}) == 1
+
+
+def test_two_processes_produce_one_target_effect_repeated(tmp_path: Path) -> None:
+    ledger_path = str(tmp_path / "repeated-ledger.db")
+    target_path = str(tmp_path / "external-target.db")
+    engine = get_engine(ledger_path)
+    init_db(engine)
+    engine.dispose()
+    with sqlite3.connect(target_path) as target:
+        target.execute(
+            "CREATE TABLE effects (id INTEGER PRIMARY KEY, case_id TEXT, "
+            "idempotency_key TEXT, owner_id TEXT)"
+        )
+
+    context = multiprocessing.get_context("spawn")
+    for attempt in range(20):
+        case_id = f"D-REPEATED-{attempt:02d}"
+        barrier = context.Barrier(2)
+        queue = context.Queue()
+        workers = [
+            context.Process(
+                target=_target_effect_worker,
+                args=(
+                    ledger_path,
+                    target_path,
+                    case_id,
+                    barrier,
+                    queue,
+                    f"worker-{attempt}-{worker_number}",
+                ),
+            )
+            for worker_number in range(2)
+        ]
+        for worker in workers:
+            worker.start()
+        for worker in workers:
+            worker.join(timeout=20)
+            assert worker.exitcode == 0
+
+        results = [queue.get(timeout=2) for _ in workers]
+        assert results.count("SUCCESS") == 1
+        assert sum(result in {"ALREADY_CLAIMED", "ALREADY_APPLIED"} for result in results) == 1
+
+        with sqlite3.connect(target_path) as target:
+            effect_count = target.execute(
+                "SELECT COUNT(*) FROM effects WHERE case_id = ?", (case_id,)
+            ).fetchone()[0]
+        assert effect_count == 1
 
 
 def test_atomic_human_lease_across_processes(tmp_path: Path) -> None:

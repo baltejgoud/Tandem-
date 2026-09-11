@@ -233,11 +233,13 @@ def test_two_workers_cannot_both_commit_same_case(tmp_path):
         worker_engine = get_engine(db_path)
         worker_factory = get_session_factory(worker_engine)
         try:
+            # Synchronize before admission. A barrier inside the mutation becomes
+            # unreachable by design once the durable claim correctly admits one worker.
+            barrier.wait(timeout=10)
             with worker_factory() as session:
                 effect_engine = EffectEngine(session=session, page=object())
 
                 def simulated_browser_commit(*_args, **_kwargs):
-                    barrier.wait(timeout=10)
                     credit = core_bank_state.post_credit("D-RACE", "8830142", 340.0)
                     return ExecutionOutcome(
                         category=OutcomeCategory.SUCCESS,
@@ -259,6 +261,10 @@ def test_two_workers_cannot_both_commit_same_case(tmp_path):
         futures = [pool.submit(worker) for _ in range(2)]
         outcomes = [future.result(timeout=45) for future in futures]
 
-    assert all(outcome.code in {OutcomeCode.COMPLETED, OutcomeCode.ALREADY_APPLIED} for outcome in outcomes)
+    assert all(
+        outcome.code
+        in {OutcomeCode.COMPLETED, OutcomeCode.ALREADY_APPLIED, OutcomeCode.ALREADY_CLAIMED}
+        for outcome in outcomes
+    )
     assert sum(outcome.code == OutcomeCode.COMPLETED for outcome in outcomes) == 1
     assert core_bank_state.members["8830142"].balance == 1580.50
