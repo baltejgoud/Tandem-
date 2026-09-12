@@ -15,7 +15,11 @@ from pydantic import ValidationError
 from simulators.core_bank.state import core_bank_state
 from tandem.discovery.agent import DiscoveryAgent
 from tandem.discovery.recorder import DiscoveryTrace
-from tandem.domain.capability import CapabilityDefinition, load_capability_from_yaml
+from tandem.domain.capability import (
+    CapabilityDefinition,
+    compute_artifact_digest,
+    load_capability_from_yaml,
+)
 from tandem.domain.effects import EffectSpec
 from tandem.domain.outcomes import OutcomeCategory, OutcomeCode
 from tandem.ledger.database import get_engine, get_session_factory, init_db
@@ -70,6 +74,19 @@ def test_unsupported_artifact_schema_version_is_rejected(tmp_path: Path) -> None
     tampered = _write_tampered(tmp_path, lambda data: data.update(schema_version=999))
     with pytest.raises(ValueError, match="schema|version|unsupported"):
         load_capability_from_yaml(str(tampered))
+
+
+def test_rehashed_external_navigation_target_is_still_rejected(tmp_path: Path) -> None:
+    data = _artifact_data()
+    data["steps"][0]["semantic_target"] = "https://evil.invalid/steal"
+    normalized = CapabilityDefinition.model_validate(data).model_dump(
+        by_alias=True, mode="json", exclude={"artifact_hash"}
+    )
+    data["artifact_hash"] = compute_artifact_digest(normalized)
+    target = tmp_path / "rehashed-evil.yaml"
+    target.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+    with pytest.raises(ValueError, match="allowlisted logical surface|Navigation target"):
+        load_capability_from_yaml(str(target))
 
 
 def test_commit_contract_requires_structural_guard_and_reconciliation() -> None:

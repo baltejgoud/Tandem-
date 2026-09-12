@@ -10,7 +10,6 @@ typed CapabilityDefinition YAML artifacts equipped with:
 - Cryptographic SHA-256 artifact verification
 """
 
-import hashlib
 from decimal import Decimal
 from pathlib import Path
 from typing import Optional, Tuple
@@ -174,18 +173,18 @@ class CapabilityCompiler:
         )
 
         # Serialize to YAML (using aliases and json mode so Enums serialize as strings)
-        raw_dict = capability.model_dump(by_alias=True, mode="json", exclude={"artifact_hash"})
-        yaml_content = yaml.dump(raw_dict, sort_keys=False)
-
-        # Compute SHA-256 artifact hash
-        artifact_hash = hashlib.sha256(yaml_content.encode("utf-8")).hexdigest()
-        capability.artifact_hash = artifact_hash
+        capability.artifact_hash = capability.compute_hash()
+        raw_dict = capability.model_dump(by_alias=True, mode="json")
+        yaml_content = yaml.safe_dump(raw_dict, sort_keys=False)
 
         filename = target_filename or f"{trace.capability_id.replace('.', '_')}.yaml"
         output_file = self.output_dir / filename
 
         # Add comment header with hash
-        header = f"# Compiled by Tandem CapabilityCompiler\n# SHA-256: {artifact_hash}\n\n"
+        header = (
+            "# Compiled by Tandem CapabilityCompiler\n"
+            f"# Canonical SHA-256: {capability.artifact_hash}\n\n"
+        )
         output_file.write_text(header + yaml_content, encoding="utf-8")
 
         return capability, output_file
