@@ -8,9 +8,13 @@ class LLMCallTracker:
         self._count: int = 0
         self._calls: list[dict] = []
 
-    def record_call(self, model: str, prompt_snippet: str) -> None:
+    def record_call(
+        self, model: str, prompt_snippet: str, provider: str = "unspecified"
+    ) -> None:
         self._count += 1
-        self._calls.append({"model": model, "snippet": prompt_snippet[:100]})
+        self._calls.append(
+            {"provider": provider, "model": model, "snippet": prompt_snippet[:100]}
+        )
 
     def reset(self) -> None:
         self._count = 0

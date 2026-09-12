@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
@@ -97,6 +98,11 @@ class CapabilityDefinition(BaseModel):
 
     id: str = Field(description="Unique capability identifier, e.g. core.post_provisional_credit")
     version: str = Field(default="1.0.0", description="Semantic version of capability artifact")
+    schema_version: int = Field(default=1, description="Capability artifact schema version")
+    created_at: str = Field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat(),
+        description="UTC creation time for this artifact",
+    )
     name: str = Field(description="Descriptive name")
     description: str = Field(description="Purpose of capability")
     system: str = Field(description="Target system key: core_bank, processor, documents")
@@ -114,12 +120,20 @@ class CapabilityDefinition(BaseModel):
     source_discovery_run_id: Optional[str] = Field(
         default=None, description="ID of discovery run that generated this artifact"
     )
+    supported_surfaces: List[str] = Field(
+        default_factory=list,
+        description="Logical surface families compatible with this capability",
+    )
     artifact_hash: Optional[str] = Field(
         default=None, description="SHA-256 hash of capability definition for integrity"
     )
 
     @model_validator(mode="after")
     def validate_capability_safety(self) -> "CapabilityDefinition":
+        if self.schema_version != 1:
+            raise ValueError(
+                f"Unsupported capability schema version {self.schema_version}; expected 1"
+            )
         if self.effect.effect_class == EffectClass.COMMIT:
             if not self.scoped_guard:
                 raise ValueError(

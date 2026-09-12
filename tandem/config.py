@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     # LLM keys for discovery (optional fallback available)
     openai_api_key: str = ""
     anthropic_api_key: str = ""
+    discovery_model: str = "gpt-5"
 
     # Base URLs
     @property
