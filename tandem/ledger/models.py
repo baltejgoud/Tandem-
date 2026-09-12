@@ -220,16 +220,26 @@ class ObligationRecord(Base):
 
 
 class LeaseRecord(Base):
-    """Single-owner mutual exclusion lease for a case session (AUTOMATION vs HUMAN)."""
+    """Expiring, fenced single-owner lease for a case/browser resource."""
 
     __tablename__ = "case_leases"
 
     case_id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    owner: Mapped[str] = mapped_column(String(32))  # AUTOMATION or HUMAN
-    acquired_at: Mapped[datetime] = mapped_column(
-        DateTime, default=lambda: datetime.now(timezone.utc)
-    )
+    resource_id: Mapped[str] = mapped_column(String(128), index=True)
+    owner_type: Mapped[str] = mapped_column(String(16))
+    owner_id: Mapped[str] = mapped_column("owner", String(128))
+    fencing_token: Mapped[int] = mapped_column(Integer, default=1)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    acquired_at: Mapped[datetime] = mapped_column(DateTime)
+    heartbeat_at: Mapped[datetime] = mapped_column(DateTime)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, index=True)
     released_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+    @property
+    def owner(self) -> str:
+        """Backward-compatible display name for the concrete owner ID."""
+
+        return self.owner_id
 
 
 class HumanHandoffRecord(Base):

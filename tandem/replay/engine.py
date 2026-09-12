@@ -248,7 +248,12 @@ class EffectEngine:
         # -------------------------------------------------------------------
         # 4. Acquire browser-session lease and durably enter APPLYING
         # -------------------------------------------------------------------
-        self.repo.acquire_lease(case_id=case_id, owner="AUTOMATION")
+        lease = self.repo.acquire_lease(
+            case_id=case_id,
+            owner=self.owner_id,
+            owner_type="AUTOMATION",
+        )
+        lease_token = lease.fencing_token
         if claim and idempotency_key:
             transitioned = self.repo.transition_effect_claim(
                 idempotency_key,
@@ -271,11 +276,19 @@ class EffectEngine:
         )
         self.session.commit()
 
+        def maintain_action_lease() -> bool:
+            self.repo.heartbeat_lease(case_id, self.owner_id, lease_token)
+            self.session.commit()
+            return True
+
+        self.executor.lease_validator = maintain_action_lease
+
         # -------------------------------------------------------------------
         # 5. Deterministic Browser Replay (Includes Control-Scoped Guards)
         # -------------------------------------------------------------------
         try:
             if any(step.action.value == "HTTP_POST" for step in capability.steps):
+                maintain_action_lease()
                 outcome = execute_http_commit(capability, inputs)
             else:
                 outcome = self.executor.execute(capability=capability, inputs=inputs)
@@ -378,7 +391,11 @@ class EffectEngine:
             if outcome.is_success:
                 self.repo.mark_intent_committed(idempotency_key)
 
-        self.repo.release_lease(case_id=case_id)
+        self.repo.release_lease(
+            case_id=case_id,
+            owner_id=self.owner_id,
+            fencing_token=lease_token,
+        )
         self.session.commit()
 
         return outcome

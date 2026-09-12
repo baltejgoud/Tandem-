@@ -40,7 +40,40 @@ def get_engine(db_path: str = "tandem_ledger.db"):
 def init_db(engine) -> None:
     """Create all ledger tables if they do not already exist."""
     Base.metadata.create_all(bind=engine)
+    _migrate_case_leases(engine)
     _migrate_event_stream(engine)
+
+
+def _migrate_case_leases(engine) -> None:
+    """Upgrade overwriteable leases to expiring, versioned fencing records."""
+
+    with engine.begin() as connection:
+        columns = {
+            row[1] for row in connection.exec_driver_sql("PRAGMA table_info(case_leases)")
+        }
+        additions = {
+            "resource_id": "TEXT",
+            "owner_type": "TEXT",
+            "fencing_token": "INTEGER DEFAULT 1",
+            "version": "INTEGER DEFAULT 1",
+            "heartbeat_at": "DATETIME",
+            "expires_at": "DATETIME",
+        }
+        for name, column_type in additions.items():
+            if name not in columns:
+                connection.exec_driver_sql(
+                    f"ALTER TABLE case_leases ADD COLUMN {name} {column_type}"
+                )
+        connection.exec_driver_sql(
+            """UPDATE case_leases
+                  SET resource_id=COALESCE(resource_id, case_id),
+                      owner_type=COALESCE(owner_type,
+                          CASE WHEN owner LIKE 'AUTOMATION%' THEN 'AUTOMATION' ELSE 'HUMAN' END),
+                      fencing_token=COALESCE(fencing_token, 1),
+                      version=COALESCE(version, 1),
+                      heartbeat_at=COALESCE(heartbeat_at, acquired_at),
+                      expires_at=COALESCE(expires_at, datetime(acquired_at, '+5 minutes'))"""
+        )
 
 
 def _migrate_event_stream(engine) -> None:

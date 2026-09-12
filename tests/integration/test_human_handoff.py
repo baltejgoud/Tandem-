@@ -11,12 +11,11 @@ Verifies:
 
 from datetime import datetime, timezone
 from pathlib import Path
+
 import pytest
 from playwright.sync_api import sync_playwright
 
 from simulators.core_bank.state import core_bank_state
-from simulators.documents.state import document_state
-from simulators.processor.state import processor_state
 from tandem.domain.errors import LeaseConflictError
 from tandem.handoff.coordinator import HandoffCoordinator
 from tandem.ledger.database import get_engine, get_session_factory, init_db
@@ -109,6 +108,7 @@ def test_compliance_interstitial_triggers_handoff_and_resumption(temp_session):
         signoff_res = coordinator.operator_clear_compliance(
             case_id=case_id,
             operator_id=operator_sarah,
+            lease_token=lease.fencing_token,
             page=page,
         )
         assert signoff_res["status"] == "COMPLIANCE_CLEARED"
