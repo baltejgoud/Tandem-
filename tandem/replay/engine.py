@@ -54,13 +54,20 @@ def settle_claim_status(outcome: ExecutionOutcome) -> EffectClaimStatus:
 class EffectEngine:
     """Orchestrates effect-aware replay with prechecks, scoped guards, and reconciliation."""
 
-    def __init__(self, session: Session, page: Page, overlay: Optional[SurfaceOverlay] = None):
+    def __init__(
+        self,
+        session: Session,
+        page: Page,
+        overlay: Optional[SurfaceOverlay] = None,
+        browser_session_id: str | None = None,
+    ):
         self.session = session
         self.page = page
         self.overlay = overlay
         self.repo = LedgerRepository(session)
         self.executor = DeterministicExecutor(page=page, overlay=overlay)
         self.owner_id = f"AUTOMATION:{os.getpid()}:{uuid4().hex}"
+        self.browser_session_id = browser_session_id
 
     def execute_capability(
         self, capability: CapabilityDefinition, inputs: Dict[str, Any]
@@ -273,6 +280,7 @@ class EffectEngine:
             idempotency_key=idempotency_key,
             expected_entity=member_id,
             expected_amount=amount,
+            browser_session_id=self.browser_session_id,
         )
         self.session.commit()
 

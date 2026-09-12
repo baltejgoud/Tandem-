@@ -11,15 +11,16 @@ Provides:
 import html
 import json
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Literal, Optional
 
-from fastapi import Depends, FastAPI, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi import Depends, FastAPI, Form, HTTPException
+from fastapi.responses import HTMLResponse, RedirectResponse
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from tandem.config import settings
 from tandem.domain.errors import LeaseConflictError
+from tandem.handoff.browser_session import browser_session_broker
 from tandem.handoff.coordinator import HandoffCoordinator
 from tandem.ledger.database import get_db
 from tandem.ledger.models import ProcedureCaseRecord
@@ -27,6 +28,17 @@ from tandem.ledger.repository import LedgerRepository
 from tandem.ledger.service import LedgerService
 
 app = FastAPI(title="Tandem Operator & Audit Console")
+
+
+class BrowserActionRequest(BaseModel):
+    """A fenced operator action dispatched to the worker-owned page."""
+
+    owner_id: str
+    fencing_token: int
+    action: Literal["CLICK", "FILL"]
+    selector: str
+    frame_selector: Optional[str] = None
+    value: Optional[str] = None
 
 
 @app.get("/health")
@@ -37,7 +49,6 @@ def healthcheck():
 @app.get("/", response_class=HTMLResponse)
 def operator_dashboard(db: Session = Depends(get_db)):
     """Overview dashboard displaying all active dispute cases and safety states."""
-    repo = LedgerRepository(db)
     service = LedgerService(db)
 
     cases = list(db.scalars(select(ProcedureCaseRecord).order_by(ProcedureCaseRecord.opened_at.desc())).all())
@@ -327,3 +338,77 @@ def api_get_case_state(case_id: str, db: Session = Depends(get_db)):
         ],
         "events_count": snapshot.events_count,
     }
+
+
+def _operator_snapshot(result: Dict[str, Any]) -> Dict[str, Any]:
+    """Remove cookie values while retaining continuity evidence for operators."""
+
+    return {key: value for key, value in result.items() if key != "cookies"}
+
+
+@app.get("/api/browser-sessions/{session_id}")
+def api_get_browser_session(session_id: str, db: Session = Depends(get_db)):
+    """Return a screenshot reference, current URL, and observed controls."""
+
+    repo = LedgerRepository(db)
+    record = repo.get_browser_session(session_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Browser session not found")
+    try:
+        result = browser_session_broker.execute(session_id, "SNAPSHOT")
+    except KeyError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    repo.update_browser_session(session_id, current_url=str(result["url"]))
+    db.commit()
+    return _operator_snapshot(result)
+
+
+@app.post("/api/browser-sessions/{session_id}/actions")
+def api_execute_browser_action(
+    session_id: str,
+    request: BrowserActionRequest,
+    db: Session = Depends(get_db),
+):
+    """Execute a bounded action in the same context after validating ownership."""
+
+    repo = LedgerRepository(db)
+    record = repo.get_browser_session(session_id)
+    if record is None or record.status != "ACTIVE":
+        raise HTTPException(status_code=404, detail="Active browser session not found")
+    if not repo.validate_lease_token(
+        record.case_id, request.owner_id, request.fencing_token
+    ):
+        raise HTTPException(status_code=409, detail="Ownership fencing token is stale")
+    lease = repo.get_lease(record.case_id)
+    assert lease is not None
+    if request.action == "FILL" and request.value is None:
+        raise HTTPException(status_code=422, detail="FILL requires value")
+    repo.heartbeat_lease(record.case_id, request.owner_id, request.fencing_token)
+    db.commit()
+    try:
+        result = browser_session_broker.execute(
+            session_id,
+            request.action,
+            selector=request.selector,
+            frame_selector=request.frame_selector,
+            value=request.value,
+        )
+    except (KeyError, RuntimeError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    repo.update_browser_session(session_id, current_url=str(result["url"]))
+    repo.record_event(
+        record.case_id,
+        "BROWSER_ACTION_EXECUTED",
+        "browser_session",
+        actor=lease.owner_type,
+        payload={
+            "session_id": session_id,
+            "owner_id": request.owner_id,
+            "fencing_token": request.fencing_token,
+            "action": request.action,
+            "selector": request.selector,
+            "url": result["url"],
+        },
+    )
+    db.commit()
+    return _operator_snapshot(result)
