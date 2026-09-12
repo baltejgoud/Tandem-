@@ -7,7 +7,6 @@ from playwright.sync_api import Locator, Page
 from tandem.domain.errors import PageDriftError
 from tandem.domain.money import parse_money
 from tandem.surfaces.base import (
-    ActionEvidence,
     ObservedControl,
     ObservedRecord,
     Surface,
@@ -206,13 +205,4 @@ class PlaywrightSurface(Surface):
             submission_action=submission["action"] if submission else None,
             submission_method=submission["method"] if submission else None,
             raw_text=raw_text,
-        )
-
-    def capture_evidence(self, step_id: str) -> ActionEvidence:
-        screenshot = self.page.screenshot(full_page=True)
-        content = self.page.content()
-        return ActionEvidence(
-            step_id=step_id,
-            screenshot_bytes=screenshot,
-            dom_snapshot=content,
         )

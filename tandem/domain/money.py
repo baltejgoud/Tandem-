@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import math
-from decimal import Decimal, InvalidOperation, ROUND_HALF_EVEN
+from decimal import ROUND_HALF_EVEN, Decimal, InvalidOperation
 from typing import Annotated, Any
 
 from pydantic import BeforeValidator
-
 
 CENT = Decimal("0.01")
 ZERO = Decimal("0.00")

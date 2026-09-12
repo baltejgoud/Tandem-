@@ -1,5 +1,6 @@
 """Pytest configuration and global fixtures for Tandem test suite."""
 import pytest
+
 from tests.server_utils import ensure_simulators_running, reset_all_simulators
 
 

@@ -6,10 +6,11 @@ import html
 import random
 from decimal import Decimal
 
-from fastapi import FastAPI, Form, Query
+from fastapi import Depends, FastAPI, Form, Query
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from simulators.core_bank.beta_state import core_bank_beta_state
+from tandem.security.auth import require_admin_token
 
 app = FastAPI(title="Institution Beta - Heritage Core Simulator")
 
@@ -18,7 +19,7 @@ def _id(prefix: str) -> str:
     return f"{prefix}-{random.randint(10000, 99999)}"
 
 
-@app.post("/api/reset")
+@app.post("/api/reset", dependencies=[Depends(require_admin_token)])
 async def reset():
     core_bank_beta_state.seed()
     return {"status": "ok", "institution_id": "beta"}

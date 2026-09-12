@@ -12,34 +12,30 @@ Executes all 8 core demonstration scenarios specified in docs/product-spec.md:
 """
 
 import argparse
-import sys
 import time
-from datetime import datetime, timezone
+from unittest.mock import patch
+
 from playwright.sync_api import sync_playwright
 
-from simulators.core_bank.state import core_bank_state
-from simulators.documents.state import document_state
-from simulators.processor.state import processor_state
-from tandem.config import settings
 from tandem.discovery.agent import DiscoveryAgent
 from tandem.discovery.compiler import CapabilityCompiler
 from tandem.domain.capability import load_capability_from_yaml
-from tandem.domain.effects import EffectClass
 from tandem.domain.outcomes import OutcomeCategory, OutcomeCode
 from tandem.handoff.coordinator import HandoffCoordinator
-from tandem.ledger.database import SessionLocal, init_db, _default_engine
-from tandem.ledger.models import ProcedureCaseRecord
-from tandem.ledger.repository import LedgerRepository
+from tandem.ledger.database import SessionLocal
 from tandem.ledger.service import LedgerService
-from unittest.mock import patch
-
 from tandem.policy.telemetry import llm_tracker
 from tandem.replay.engine import EffectEngine
 from tandem.replay.executor import DeterministicExecutor
+from tandem.support.simulator_control import (
+    ensure_simulators_running,
+    get_member,
+    reset_all_simulators,
+    set_core_bank_mode,
+    set_processor_mode,
+)
 from tandem.surfaces.overlays import get_overlay
 from tandem.workflow.reg_e import RegEWorkflow
-from tandem.workflow.state_machine import RegEState
-from tests.server_utils import ensure_simulators_running, reset_all_simulators
 
 
 def print_banner(title: str, scenario_num: int):
@@ -144,7 +140,7 @@ def run_replay_same_case():
         print("[*] Pass 1: Posting initial provisional credit via EffectEngine...")
         outcome_1 = engine.execute_capability(capability=cap, inputs=inputs)
         print(f"    Pass 1 Outcome: {outcome_1.code.value} | Memo: {outcome_1.audit_ref}")
-        initial_balance = core_bank_state.members["8830142"].balance
+        initial_balance = get_member("8830142")["balance"]
 
         # Second pass: Replay same case
         print("\n[*] Pass 2: Attempting duplicate execution with same case_id...")
@@ -152,7 +148,7 @@ def run_replay_same_case():
         outcome_2 = engine.execute_capability(capability=cap, inputs=inputs)
         browser.close()
 
-    subsequent_balance = core_bank_state.members["8830142"].balance
+    subsequent_balance = get_member("8830142")["balance"]
     print(f"    Pass 2 Outcome:        {outcome_2.code.value} ({outcome_2.category.value})")
     print(f"    Precheck Detection:    {outcome_2.message}")
     print(f"    Money Moved in Pass 2: {outcome_2.money_moved}")
@@ -202,8 +198,8 @@ def run_transposed_id():
 
     assert outcome.code == OutcomeCode.ENTITY_BINDING_MISMATCH
     assert outcome.money_moved is False
-    assert core_bank_state.members["8830124"].balance == 410.25
-    assert core_bank_state.members["8830142"].balance == 1240.50
+    assert get_member("8830124")["balance"] == 410.25
+    assert get_member("8830142")["balance"] == 1240.50
     print("\n[OK] Scenario 4 Verification Passed: Container guard caught account mismatch before commit.")
 
 
@@ -242,7 +238,7 @@ def run_crash_resume():
     db2 = SessionLocal()
     service = LedgerService(db2)
     intermediate = service.reconstruct_case_state(case_id)
-    print(f"\n[*] Ledger State After Hard Process Crash:")
+    print("\n[*] Ledger State After Hard Process Crash:")
     print(f"    - Status:       {intermediate.status}")
     print(f"    - Money Moved:  {intermediate.money_moved}")
     print(f"    - Memo Code:    {intermediate.latest_memo_ref}")
@@ -258,10 +254,10 @@ def run_crash_resume():
         browser.close()
 
     final_snapshot = service.reconstruct_case_state(case_id)
-    print(f"[+] Resumption Complete:")
+    print("[+] Resumption Complete:")
     print(f"    - Final Status:         {final_snapshot.status}")
     print(f"    - Total Capabilities:   {final_snapshot.completed_capabilities}")
-    print(f"    - 12 CFR 1005.11 Met:   Notice sent; 10-day credit deadline resolved")
+    print("    - 12 CFR 1005.11 Met:   Notice sent; 10-day credit deadline resolved")
     print(f"    - Replay LLM Calls:     {llm_tracker.call_count}")
 
     assert resumed_res["status"] == "SUCCESS"
@@ -280,8 +276,7 @@ def run_human_handoff():
     reset_all_simulators()
     llm_tracker.reset()
 
-    core_bank_state.require_compliance_interstitial = True
-    core_bank_state.compliance_cleared = False
+    set_core_bank_mode(require_compliance_interstitial=True)
 
     case_id = f"D-HANDOFF-{int(time.time())}"
     member_id = "8830142"
@@ -310,14 +305,19 @@ def run_human_handoff():
 
         # Operator clears compliance interstitial in browser
         print("[*] Operator acknowledges compliance interstitial on active browser session...")
-        coordinator.operator_clear_compliance(case_id=case_id, operator_id="compliance_officer_sarah", page=page)
+        coordinator.operator_clear_compliance(
+            case_id=case_id,
+            operator_id="compliance_officer_sarah",
+            lease_token=lease.fencing_token,
+            page=page,
+        )
 
         # Resuming automation
         print("\n[*] Resuming workflow as automation...")
         res_resumed = wf.run_case(case_id=case_id, member_id=member_id, amount=amount)
         browser.close()
 
-    print(f"[+] Handoff Resumption Succeeded:")
+    print("[+] Handoff Resumption Succeeded:")
     print(f"    - Final State:      {res_resumed['state']}")
     print(f"    - Money Moved:      {res_resumed['money_moved']}")
 
@@ -329,19 +329,23 @@ def run_human_handoff():
 
 def run_second_institution():
     print_banner("Second Institution Skin & Surface Overlay Adaptation", 7)
-    print("[*] Concept: Replays standard capability against Institution Beta legacy skin (/inst_beta).")
+    print("[*] Concept: Replays the unmodified capability artifact against the independent")
+    print("    Institution Beta service, trusted-routed by 'institution_id' -- not a mutated URL.")
     print("    Crucial Invariant: Unmapped encounters drift; mapped with surface overlay succeeds with 0 LLM calls.\n")
 
     reset_all_simulators()
     llm_tracker.reset()
 
+    # The artifact itself is never mutated: routing to Institution Beta's independent
+    # service (settings.core_bank_2_url) is resolved at runtime from 'institution_id',
+    # kept outside the immutable, hash-verified capability (see tandem/surfaces/routing.py).
     cap = load_capability_from_yaml("capabilities/core/post_provisional_credit.yaml")
-    beta_cap = cap.model_copy(deep=True)
-    for s in beta_cap.steps:
-        if s.action.value == "NAVIGATE":
-            s.semantic_target = "http://127.0.0.1:8001/inst_beta"
-
-    inputs = {"member_id": "8830142", "case_id": "D-BETA-7001", "amount": 340.00}
+    inputs = {
+        "institution_id": "beta",
+        "member_id": "8830142",
+        "case_id": "D-BETA-7001",
+        "amount": 340.00,
+    }
 
     # Pass 1: Unmapped
     print("[*] Attempt 1: Executing on Institution Beta WITHOUT surface overlay...")
@@ -349,24 +353,24 @@ def run_second_institution():
         browser = p.chromium.launch(headless=True)
         page = browser.new_page()
         executor_unmapped = DeterministicExecutor(page=page, overlay=None)
-        outcome_unmapped = executor_unmapped.execute(capability=beta_cap, inputs=inputs)
+        outcome_unmapped = executor_unmapped.execute(capability=cap, inputs=inputs)
         browser.close()
 
     print(f"    Outcome: {outcome_unmapped.code.value} ({outcome_unmapped.category.value})")
     print(f"    Drift:   {outcome_unmapped.message}")
     assert outcome_unmapped.money_moved is False
 
-    # Pass 2: Mapped with core_bank_beta overlay
-    print("\n[*] Attempt 2: Executing on Institution Beta WITH 'core_bank_beta' surface overlay...")
+    # Pass 2: Mapped with the Beta surface overlay
+    print("\n[*] Attempt 2: Executing on Institution Beta WITH surface overlay...")
     reset_all_simulators()
     llm_tracker.reset()
-    overlay = get_overlay("core_bank_beta")
+    overlay = get_overlay("beta")
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         page = browser.new_page()
         executor_mapped = DeterministicExecutor(page=page, overlay=overlay)
-        outcome_mapped = executor_mapped.execute(capability=beta_cap, inputs=inputs)
+        outcome_mapped = executor_mapped.execute(capability=cap, inputs=inputs)
         browser.close()
 
     print(f"    Outcome:        {outcome_mapped.code.value} ({outcome_mapped.category.value})")
@@ -388,7 +392,7 @@ def run_uncertain_effect():
     # Part A: Postcheck Reconciliation
     print("[*] Part A: 504 Timeout where postcheck inquiry confirms transaction succeeded...")
     reset_all_simulators()
-    processor_state.timeout_after_submit = True
+    set_processor_mode(timeout_after_submit=True)
 
     db = SessionLocal()
     with sync_playwright() as p:

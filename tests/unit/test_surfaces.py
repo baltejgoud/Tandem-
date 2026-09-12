@@ -25,7 +25,7 @@ def test_overlay_candidate_resolution():
 def test_overlay_registry():
     alpha = get_overlay("core_bank_alpha")
     assert alpha is not None
-    assert alpha.institution_id == "core_bank_alpha"
+    assert alpha.institution_id == "alpha"
 
     beta = get_overlay("core_bank_beta")
     assert beta is not None

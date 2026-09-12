@@ -169,8 +169,9 @@ Tandem/
 git clone https://github.com/tandem-org/tandem.git
 cd Tandem
 
-# Create virtual environment and sync dependencies
-uv sync
+# Create virtual environment and sync dependencies (frozen: reproducible from uv.lock,
+# --extra dev: pulls in pytest/ruff/mypy so the commands below work out of the box)
+uv sync --extra dev --frozen
 
 # Install Playwright Chromium browser
 uv run playwright install chromium
@@ -178,21 +179,32 @@ uv run playwright install chromium
 
 ### Running the Test Suite
 ```bash
-# Run all 45 automated unit, integration, and E2E tests
-uv run pytest -v
+# Run all unit, integration, and E2E tests
+uv run pytest tests -v
+
+# Run the preserved independent adversarial audit suite
+uv run pytest audit_tests -v
 ```
 
 ### Starting the Interactive Operator Console & Simulators
 ```bash
-# Starts Core Bank (8001), Card Processor (8003), Notice System (8004), and Tandem Console (8000)
+# Starts Core Bank Alpha (8001), Core Bank Beta (8002), Card Processor (8003),
+# Notice System (8004), and Tandem Console (8000), all bound to 127.0.0.1 by default
 uv run python scripts/start_services.py
+# ...or, once installed (including from a built wheel), the equivalent console script:
+uv run tandem
 ```
 Open your browser to:
 - **Tandem Operator Console:** [http://127.0.0.1:8000](http://127.0.0.1:8000)
 - **Hostile Core Banking (Institution Alpha):** [http://127.0.0.1:8001](http://127.0.0.1:8001)
-- **Legacy Banking Skin (Institution Beta):** [http://127.0.0.1:8001/inst_beta](http://127.0.0.1:8001/inst_beta)
+- **Independent Core Banking (Institution Beta):** [http://127.0.0.1:8002](http://127.0.0.1:8002)
 - **Card Processor Portal:** [http://127.0.0.1:8003](http://127.0.0.1:8003)
 - **Notice Disclosure Portal:** [http://127.0.0.1:8004](http://127.0.0.1:8004)
+
+Admin/operator mutation routes (simulator resets and failure switches, lease
+claim/release, browser-session actions) require the `TANDEM_ADMIN_TOKEN` bearer
+token (see [SECURITY.md](SECURITY.md)); the operator console's own HTML forms embed
+it automatically.
 
 ---
 
@@ -208,7 +220,7 @@ Tandem includes an interactive CLI (`scripts/demo.py`) that runs the 8 specifica
 | **4** | `uv run python scripts/demo.py --scenario transposed-id` | Confusable account selection (`8830124` vs `8830142`) | Scoped container guard halts with `ENTITY_BINDING_MISMATCH` |
 | **5** | `uv run python scripts/demo.py --scenario crash-resume` | Mid-procedure process kill after money moves | Resumes from SQLite WAL ledger; 0 duplicate credit; notice sent |
 | **6** | `uv run python scripts/demo.py --scenario human-handoff` | Encounters compliance review interstitial | Single-owner lease transferred to operator; resumes cleanly |
-| **7** | `uv run python scripts/demo.py --scenario second-institution` | Executes against legacy skin (`/inst_beta`) | Surface overlay adapts selectors with zero LLM calls |
+| **7** | `uv run python scripts/demo.py --scenario second-institution` | Executes the unmodified artifact against the independent Institution Beta service (port 8002) | Surface overlay adapts selectors with zero LLM calls |
 | **8** | `uv run python scripts/demo.py --scenario uncertain-effect` | 504 timeout on commit submission | Postcheck reconciliation; escalates without blind retry |
 
 To run all 8 scenarios sequentially:

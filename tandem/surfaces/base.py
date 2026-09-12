@@ -2,9 +2,8 @@
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 
 from tandem.domain.money import Money
 
@@ -45,17 +44,6 @@ class ObservedRecord:
     submission_method: Optional[str] = None
     raw_text: str = ""
     attributes: Dict[str, str] = field(default_factory=dict)
-
-
-@dataclass
-class ActionEvidence:
-    """Audit evidence captured before or after an action execution."""
-
-    step_id: str
-    screenshot_bytes: Optional[bytes] = None
-    dom_snapshot: Optional[str] = None
-    extracted_data: Dict[str, Any] = field(default_factory=dict)
-    captured_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 @dataclass
@@ -113,8 +101,4 @@ class Surface(ABC):
         control_candidates: Optional[List[str]] = None,
         semantic_target: str = "Mutating submit control",
     ) -> ObservedRecord:
-        pass
-
-    @abstractmethod
-    def capture_evidence(self, step_id: str) -> ActionEvidence:
         pass

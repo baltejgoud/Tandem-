@@ -41,7 +41,11 @@ def test_crash_mid_procedure_and_safe_resume(shared_db_path: str):
     5. Pending notice and deadline detected.
     6. Workflow completes notice dispatch and settles in WAITING_RESOLUTION.
     """
-    clock = datetime(2026, 9, 2, 9, 0, 0, tzinfo=timezone.utc)
+    # Anchored to the real clock (not a fixed historical date) so the NOTICE_2_DAY
+    # deadline this creates stays safely in the future no matter when the suite
+    # actually runs -- a fixed past date would eventually become genuinely overdue
+    # by real wall-clock time and the assertion below would flip from PENDING.
+    clock = datetime.now(timezone.utc)
 
     # =======================================================================
     # LIFETIME 1: Initial process running until crash injection

@@ -189,7 +189,9 @@ def _run_full_procedure(path: str, case_id: str) -> None:
             case_id,
             "8830142",
             "340.00",
-            injected_clock=datetime(2026, 9, 2, 9, 0, tzinfo=timezone.utc),
+            # Real clock, not a fixed historical date: keeps NOTICE_2_DAY safely in
+            # the future regardless of when the suite actually runs.
+            injected_clock=datetime.now(timezone.utc),
         )
         browser.close()
     assert result["status"] == "SUCCESS", result
@@ -261,9 +263,8 @@ def test_rebuild_is_idempotent_on_intact_case(ledger_path: str) -> None:
 
 
 def test_rebuild_refuses_broken_chain(ledger_path: str) -> None:
-    from tandem.ledger.rebuild import rebuild_case
-
     from tandem.domain.errors import LedgerIntegrityError
+    from tandem.ledger.rebuild import rebuild_case
 
     engine, session = _session(ledger_path)
     repo = LedgerRepository(session)

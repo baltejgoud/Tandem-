@@ -49,6 +49,7 @@ class LedgerService:
             raise ValueError(f"Cannot reconstruct state: Case '{case_id}' does not exist in ledger")
 
         executions = self.repo.get_executions_for_case(case_id)
+        self.repo.mark_overdue_deadlines(case_id)
         deadlines = self.repo.get_deadlines_for_case(case_id)
         lease = self.repo.get_lease(case_id)
         events = self.repo.get_events_for_case(case_id)
@@ -79,7 +80,9 @@ class LedgerService:
             elif exc.status in ("HARD_FAILURE", "UNCERTAIN_EFFECT"):
                 requires_human = True
 
-        pending_deadlines = [d for d in deadlines if d.status == "PENDING"]
+        # Includes OVERDUE alongside PENDING: an operator must see a lapsed statutory
+        # deadline at least as prominently as one still on track. Only MET is excluded.
+        pending_deadlines = [d for d in deadlines if d.status != "MET"]
 
         return CaseStateSnapshot(
             case_id=case.case_id,
