@@ -4,6 +4,7 @@ from typing import Any, Dict, Optional
 
 from playwright.sync_api import Page
 
+from tandem.config import settings
 from tandem.domain.capability import CapabilityDefinition, StepAction
 from tandem.domain.effects import EffectClass
 from tandem.domain.errors import (
@@ -92,6 +93,25 @@ class DeterministicExecutor:
                 # 2. Execute step action
                 if step.action == StepAction.NAVIGATE:
                     url = render_template(step.semantic_target, context)
+                    if url.startswith("surface://"):
+                        if url != f"surface://{capability.system}/home":
+                            raise ValueError(f"Unsupported logical surface route: {url}")
+                        routes = {
+                            "core_bank": settings.core_bank_url,
+                            "processor": settings.processor_url,
+                            "documents": settings.documents_url,
+                        }
+                        if capability.system not in routes:
+                            raise ValueError(
+                                f"No runtime route configured for surface '{capability.system}'"
+                            )
+                        url = routes[capability.system]
+                        if (
+                            capability.system == "core_bank"
+                            and self.overlay
+                            and self.overlay.institution_id == "beta"
+                        ):
+                            url = f"{url}/inst_beta"
                     self.surface.navigate(url)
 
                 elif step.action == StepAction.FILL:
