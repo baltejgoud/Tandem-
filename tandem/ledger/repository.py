@@ -21,6 +21,7 @@ from tandem.ledger.events import (
     compute_event_hash,
 )
 from tandem.ledger.models import (
+    BrowserSessionRecord,
     CapabilityExecutionRecord,
     DeadlineRecord,
     EffectClaimRecord,
@@ -939,6 +940,60 @@ class LedgerRepository:
     # -----------------------------------------------------------------------
     # Human Handoff
     # -----------------------------------------------------------------------
+    def register_browser_session(
+        self,
+        case_id: str,
+        session_id: str,
+        current_url: str = "about:blank",
+    ) -> BrowserSessionRecord:
+        """Persist a stable ID for a browser context owned by a worker."""
+
+        now = datetime.now(timezone.utc)
+        record = BrowserSessionRecord(
+            session_id=session_id,
+            case_id=case_id,
+            status="ACTIVE",
+            current_url=current_url,
+            created_at=now,
+            updated_at=now,
+        )
+        self.session.add(record)
+        self.session.flush()
+        self.record_event(
+            case_id,
+            "BROWSER_SESSION_OPENED",
+            "browser_session",
+            payload={
+                "session_id": session_id,
+                "status": "ACTIVE",
+                "current_url": current_url,
+                "created_at": now.isoformat(),
+            },
+        )
+        return record
+
+    def get_browser_session(self, session_id: str) -> Optional[BrowserSessionRecord]:
+        return self.session.scalar(
+            select(BrowserSessionRecord).where(BrowserSessionRecord.session_id == session_id)
+        )
+
+    def update_browser_session(
+        self,
+        session_id: str,
+        current_url: str,
+        status: str = "ACTIVE",
+    ) -> BrowserSessionRecord:
+        record = self.get_browser_session(session_id)
+        if record is None:
+            raise ValueError(f"Unknown browser session '{session_id}'")
+        record.current_url = current_url
+        record.status = status
+        record.updated_at = datetime.now(timezone.utc)
+        if status == "CLOSED":
+            record.closed_at = record.updated_at
+        self.session.flush()
+        return record
+
     def record_handoff(
         self, case_id: str, reason: str, operator_id: str, action_taken: str
     ) -> HumanHandoffRecord:

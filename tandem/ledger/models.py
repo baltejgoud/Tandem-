@@ -242,6 +242,20 @@ class LeaseRecord(Base):
         return self.owner_id
 
 
+class BrowserSessionRecord(Base):
+    """Durable identity and last-known state for a worker-owned browser context."""
+
+    __tablename__ = "browser_sessions"
+
+    session_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    case_id: Mapped[str] = mapped_column(String(64), index=True)
+    status: Mapped[str] = mapped_column(String(16), default="ACTIVE", index=True)
+    current_url: Mapped[str] = mapped_column(Text, default="about:blank")
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+    updated_at: Mapped[datetime] = mapped_column(DateTime)
+    closed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+
 class HumanHandoffRecord(Base):
     """Audit log of operator interventions during live session handoff."""
 

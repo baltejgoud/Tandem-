@@ -43,6 +43,7 @@ class RegEWorkflow:
         session: Session,
         page: Optional[Page] = None,
         kill_after_credit: bool = False,
+        browser_session_id: str | None = None,
     ):
         self.session = session
         self.page = page
@@ -51,6 +52,7 @@ class RegEWorkflow:
         self.kill_after_credit = kill_after_credit or (
             os.environ.get("PROCESS_KILL_AFTER") == "core.post_provisional_credit"
         )
+        self.browser_session_id = browser_session_id
 
     def transition(
         self, case_id: str, new_state: RegEState, money_moved: Optional[bool] = None
@@ -241,7 +243,11 @@ class RegEWorkflow:
             processor_capability = load_capability_from_yaml(
                 "capabilities/processor/file_chargeback.yaml"
             )
-            processor_outcome = EffectEngine(self.session, self.page).execute_capability(
+            processor_outcome = EffectEngine(
+                self.session,
+                self.page,
+                browser_session_id=self.browser_session_id,
+            ).execute_capability(
                 processor_capability,
                 {
                     **common_effect_inputs,
@@ -268,7 +274,11 @@ class RegEWorkflow:
                     "Playwright page required for core.post_provisional_credit replay"
                 )
 
-            engine = EffectEngine(session=self.session, page=self.page)
+            engine = EffectEngine(
+                session=self.session,
+                page=self.page,
+                browser_session_id=self.browser_session_id,
+            )
             outcome = engine.execute_capability(
                 capability=cap,
                 inputs=common_effect_inputs,
@@ -317,7 +327,11 @@ class RegEWorkflow:
             document_capability = load_capability_from_yaml(
                 "capabilities/documents/send_notice.yaml"
             )
-            document_outcome = EffectEngine(self.session, self.page).execute_capability(
+            document_outcome = EffectEngine(
+                self.session,
+                self.page,
+                browser_session_id=self.browser_session_id,
+            ).execute_capability(
                 document_capability,
                 {
                     **common_effect_inputs,
