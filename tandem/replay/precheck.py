@@ -9,6 +9,7 @@ from tandem.domain.capability import CapabilityDefinition
 from tandem.domain.effects import EffectClass
 from tandem.domain.money import parse_money
 from tandem.domain.outcomes import ExecutionOutcome, OutcomeCategory, OutcomeCode
+from tandem.surfaces.routing import core_bank_url_for
 
 
 def execute_precheck(
@@ -36,7 +37,7 @@ def execute_precheck(
 
     url: str
     if capability.system == "core_bank" or "provisional_credit" in capability.id:
-        url = f"{settings.core_bank_url}/api/credits/{case_id}"
+        url = f"{core_bank_url_for(inputs.get('institution_id'))}/api/credits/{case_id}"
     elif capability.system == "processor" or "chargeback" in capability.id:
         url = f"{settings.processor_url}/api/chargebacks/{case_id}"
     elif capability.system == "documents" or "notice" in capability.id:

@@ -8,6 +8,7 @@ from tandem.config import settings
 from tandem.domain.capability import CapabilityDefinition
 from tandem.domain.money import parse_money
 from tandem.domain.outcomes import ExecutionOutcome, OutcomeCategory, OutcomeCode
+from tandem.surfaces.routing import core_bank_url_for
 
 
 def execute_postcheck(
@@ -19,7 +20,7 @@ def execute_postcheck(
         return _uncertain(OutcomeCode.POSTCHECK_INVALID_RESPONSE, "Postcheck requires case_id")
 
     if capability.system == "core_bank" or "provisional_credit" in capability.id:
-        url = f"{settings.core_bank_url}/api/credits/{case_id}"
+        url = f"{core_bank_url_for(inputs.get('institution_id'))}/api/credits/{case_id}"
         moves_money = True
         reference_field = "memo_code"
     elif capability.system == "processor" or "chargeback" in capability.id:

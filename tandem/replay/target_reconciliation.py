@@ -12,6 +12,7 @@ from tandem.domain.money import parse_money
 from tandem.domain.outcomes import ExecutionOutcome, OutcomeCategory, OutcomeCode
 from tandem.ledger.models import EffectClaimRecord
 from tandem.ledger.repository import LedgerRepository
+from tandem.surfaces.routing import core_bank_url_for
 
 
 def reconcile_applied_effects(
@@ -33,7 +34,7 @@ def _reconcile_claim(
 ) -> Optional[ExecutionOutcome]:
     adapters = {
         "core.post_provisional_credit": (
-            f"{settings.core_bank_url}/api/credits/{claim.business_reference}",
+            f"{core_bank_url_for(claim.institution_id)}/api/credits/{claim.business_reference}",
             "POSTED",
             "memo_code",
         ),

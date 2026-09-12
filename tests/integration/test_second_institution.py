@@ -10,8 +10,9 @@ Verifies:
 import pytest
 from playwright.sync_api import sync_playwright
 
+from simulators.core_bank.beta_state import core_bank_beta_state
 from simulators.core_bank.state import core_bank_state
-from tandem.domain.capability import StepAction, load_capability_from_yaml
+from tandem.domain.capability import load_capability_from_yaml
 from tandem.domain.outcomes import OutcomeCategory, OutcomeCode
 from tandem.policy.telemetry import llm_tracker
 from tandem.replay.executor import DeterministicExecutor
@@ -34,14 +35,9 @@ def reset_test_state():
 
 
 def test_second_institution_replay_with_surface_overlay():
-    # 1. Load standard capability artifact
+    artifact_path = "capabilities/core/post_provisional_credit.yaml"
+    artifact_before = open(artifact_path, "rb").read()
     cap = load_capability_from_yaml("capabilities/core/post_provisional_credit.yaml")
-
-    # Override first step URL to point to Institution Beta portal
-    beta_cap = cap.model_copy(deep=True)
-    for step in beta_cap.steps:
-        if step.action == StepAction.NAVIGATE:
-            step.semantic_target = "http://127.0.0.1:8001/inst_beta"
 
     inputs = {
         "institution_id": "beta",
@@ -60,7 +56,7 @@ def test_second_institution_replay_with_surface_overlay():
         page = browser.new_page()
 
         unmapped_executor = DeterministicExecutor(page=page, overlay=None)
-        outcome_unmapped = unmapped_executor.execute(capability=beta_cap, inputs=inputs)
+        outcome_unmapped = unmapped_executor.execute(capability=cap, inputs=inputs)
         browser.close()
 
     # Without overlay, primary search box input[name='q'] fails to resolve
@@ -75,7 +71,7 @@ def test_second_institution_replay_with_surface_overlay():
     # -------------------------------------------------------------------
     reset_all_simulators()
     llm_tracker.reset()
-    beta_overlay = get_overlay("core_bank_beta")
+    beta_overlay = get_overlay("beta")
     assert beta_overlay is not None
 
     with sync_playwright() as p:
@@ -83,7 +79,7 @@ def test_second_institution_replay_with_surface_overlay():
         page = browser.new_page()
 
         mapped_executor = DeterministicExecutor(page=page, overlay=beta_overlay)
-        outcome_mapped = mapped_executor.execute(capability=beta_cap, inputs=inputs)
+        outcome_mapped = mapped_executor.execute(capability=cap, inputs=inputs)
         browser.close()
 
     assert (
@@ -94,11 +90,28 @@ def test_second_institution_replay_with_surface_overlay():
     assert outcome_mapped.audit_ref is not None
     assert outcome_mapped.audit_ref.startswith("MC-")
 
-    # Verify money movement landed in core bank
+    alpha_inputs = dict(inputs, institution_id="alpha", case_id="D-ALPHA-7701")
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        alpha_outcome = DeterministicExecutor(page=browser.new_page()).execute(
+            capability=cap,
+            inputs=alpha_inputs,
+        )
+        browser.close()
+    assert alpha_outcome.category == OutcomeCategory.SUCCESS
+
+    # Verify the same artifact routed to two isolated services and stores.
     assert core_bank_state.members["8830142"].balance == 1580.50
-    credit_rec = core_bank_state.find_credit_by_case("D-BETA-7701")
+    assert core_bank_state.find_credit_by_case("D-BETA-7701") is None
+    assert core_bank_state.find_credit_by_case("D-ALPHA-7701") is not None
+    assert core_bank_beta_state.members["8830142"].balance == 1580.50
+    credit_rec = core_bank_beta_state.find_credit_by_case("D-BETA-7701")
     assert credit_rec is not None
     assert credit_rec.amount == 340.00
+    assert credit_rec.institution_id == "beta"
+    assert core_bank_beta_state.find_credit_by_case("D-ALPHA-7701") is None
+    assert open(artifact_path, "rb").read() == artifact_before
+    assert cap.artifact_hash == cap.compute_hash()
 
     # CRITICAL INVARIANT: Zero LLM calls during replay across institutions!
     assert (
