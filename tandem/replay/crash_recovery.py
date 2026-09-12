@@ -23,6 +23,10 @@ def recover_dead_effect_claims(
     repo: LedgerRepository, case_id: str
 ) -> Optional[ExecutionOutcome]:
     """Resolve any abandoned COMMIT claim using independent target truth."""
+    lease = repo.get_lease(case_id)
+    if lease and lease.released_at is None and _local_owner_is_dead(lease.owner_id):
+        repo.release_lease(case_id, lease.owner_id, lease.fencing_token)
+
     for claim in repo.get_effect_claims_for_case(case_id):
         if claim.status not in {
             EffectClaimStatus.CLAIMED.value,

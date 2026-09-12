@@ -1,6 +1,6 @@
 """Deterministic capability execution engine using Playwright and Surface abstraction."""
 
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 from playwright.sync_api import Page
 
@@ -11,6 +11,7 @@ from tandem.domain.errors import (
     AmountMismatchError,
     ComplianceInterstitialError,
     EntityBindingMismatchError,
+    LeaseConflictError,
     PageDriftError,
     SessionExpiredError,
 )
@@ -38,6 +39,7 @@ class DeterministicExecutor:
         self.page = page
         self.surface = PlaywrightSurface(page)
         self.overlay = overlay
+        self.lease_validator: Callable[[], bool] | None = None
 
     def execute(self, capability: CapabilityDefinition, inputs: Dict[str, Any]) -> ExecutionOutcome:
         """Execute capability steps. Replay must perform ZERO LLM calls."""
@@ -59,6 +61,10 @@ class DeterministicExecutor:
                 raise SessionExpiredError("Target system session has timed out")
 
             for step in capability.steps:
+                if self.lease_validator is not None and not self.lease_validator():
+                    raise LeaseConflictError(
+                        "Browser action rejected because the ownership fencing token is stale"
+                    )
                 # Check for compliance review interstitial
                 try:
                     ctx = self.surface._get_context(frame_selector)
@@ -242,6 +248,15 @@ class DeterministicExecutor:
             return ExecutionOutcome(
                 category=OutcomeCategory.RECOVERABLE_FAILURE,
                 code=OutcomeCode.SESSION_EXPIRED,
+                message=str(e),
+                money_moved=False,
+                execution_phase=execution_phase,
+            )
+
+        except LeaseConflictError as e:
+            return ExecutionOutcome(
+                category=OutcomeCategory.NEEDS_HUMAN,
+                code=OutcomeCode.LEASE_FENCED,
                 message=str(e),
                 money_moved=False,
                 execution_phase=execution_phase,

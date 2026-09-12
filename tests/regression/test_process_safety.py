@@ -8,8 +8,14 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 
+from playwright.sync_api import sync_playwright
+
+from tandem.domain.capability import load_capability_from_yaml
+from tandem.domain.outcomes import OutcomeCategory, OutcomeCode
 from tandem.ledger.database import get_engine, get_session_factory, init_db
 from tandem.ledger.repository import LedgerRepository
+from tandem.replay.executor import DeterministicExecutor
+from tests.server_utils import ensure_simulators_running, reset_all_simulators
 
 
 def _identity(case_id: str):
@@ -147,6 +153,14 @@ def test_two_processes_produce_one_target_effect_repeated(tmp_path: Path) -> Non
     context = multiprocessing.get_context("spawn")
     for attempt in range(20):
         case_id = f"D-REPEATED-{attempt:02d}"
+        case_engine = get_engine(ledger_path)
+        case_factory = get_session_factory(case_engine)
+        with case_factory() as session:
+            LedgerRepository(session).create_or_get_case(
+                case_id, "8830142", Decimal("340.00")
+            )
+            session.commit()
+        case_engine.dispose()
         barrier = context.Barrier(2)
         queue = context.Queue()
         workers = [
@@ -240,8 +254,49 @@ def test_stale_lease_recovery_fences_old_owner(tmp_path: Path) -> None:
         )
         session.commit()
         assert new.fencing_token > old_token
-        assert not repo.validate_lease_token("D-STALE", "worker-old", old_token)
-        assert repo.validate_lease_token("D-STALE", "worker-new", new.fencing_token)
+        checked_at = now + timedelta(seconds=2)
+        assert not repo.validate_lease_token(
+            "D-STALE", "worker-old", old_token, now=checked_at
+        )
+        assert repo.validate_lease_token(
+            "D-STALE", "worker-new", new.fencing_token, now=checked_at
+        )
+
+
+def test_stale_automation_fence_blocks_the_next_browser_action() -> None:
+    ensure_simulators_running()
+    reset_all_simulators()
+    capability = load_capability_from_yaml("capabilities/core/post_provisional_credit.yaml")
+    validations = 0
+
+    def lease_is_current() -> bool:
+        nonlocal validations
+        validations += 1
+        return validations == 1
+
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        executor = DeterministicExecutor(browser.new_page())
+        executor.lease_validator = lease_is_current
+        outcome = executor.execute(
+            capability,
+            {
+                "institution_id": "alpha",
+                "member_id": "8830142",
+                "account_id": "CHK-8830142-01",
+                "case_id": "D-FENCED-ACTION",
+                "amount": "340.00",
+                "currency": "USD",
+            },
+        )
+        browser.close()
+
+    assert validations == 2
+    assert outcome.category == OutcomeCategory.NEEDS_HUMAN
+    assert outcome.code == OutcomeCode.LEASE_FENCED
+    from simulators.core_bank.state import core_bank_state
+
+    assert core_bank_state.find_credit_by_case("D-FENCED-ACTION") is None
 
 
 def test_obligation_is_durable_before_effect_claim(tmp_path: Path) -> None:

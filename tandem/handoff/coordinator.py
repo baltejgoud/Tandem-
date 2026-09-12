@@ -4,8 +4,8 @@ Manages single-owner mutual-exclusion lease transitions between AUTOMATION and H
 operators, compliance review interstitial handling, operator sign-off, and safe resumption.
 """
 
-from datetime import datetime, timezone
 from typing import Any, Dict, Optional
+
 from playwright.sync_api import Page
 from sqlalchemy.orm import Session
 
@@ -47,20 +47,21 @@ class HandoffCoordinator:
 
     def claim_operator_lease(self, case_id: str, operator_id: str) -> LeaseRecord:
         """Enforce single-owner lease rule before an operator can act on a case."""
-        current_lease = self.repo.get_lease(case_id)
-        if current_lease and not current_lease.released_at:
-            if current_lease.owner == "AUTOMATION":
-                raise LeaseConflictError(
-                    f"Case {case_id} lease currently held by AUTOMATION. "
-                    f"Automation must yield lease before operator can claim."
-                )
-            elif current_lease.owner != operator_id:
-                raise LeaseConflictError(
-                    f"Case {case_id} lease already held by operator '{current_lease.owner}'. "
-                    f"Single-owner invariant prevents concurrent operator claims."
-                )
-
-        lease = self.repo.acquire_lease(case_id=case_id, owner=operator_id)
+        try:
+            lease = self.repo.acquire_lease(
+                case_id=case_id,
+                owner=operator_id,
+                owner_type="HUMAN",
+            )
+        except LeaseConflictError as exc:
+            current = self.repo.get_lease(case_id)
+            if current and current.owner_type == "HUMAN":
+                owner_description = f"operator '{current.owner_id}'"
+            else:
+                owner_description = "automation"
+            raise LeaseConflictError(
+                f"Case {case_id} lease already held by {owner_description}: {exc}"
+            ) from exc
         self.repo.record_event(
             case_id=case_id,
             event_type="OPERATOR_LEASE_ACQUIRED",
@@ -74,15 +75,17 @@ class HandoffCoordinator:
         self,
         case_id: str,
         operator_id: str,
+        lease_token: int,
         page: Page,
         frame_selector: str = "#core_workspace_frame",
     ) -> Dict[str, Any]:
         """Operator signs off compliance interstitial on the active browser session."""
-        lease = self.repo.get_lease(case_id)
-        if not lease or lease.released_at or lease.owner != operator_id:
+        if not self.repo.validate_lease_token(case_id, operator_id, lease_token):
             raise LeaseConflictError(
-                f"Operator '{operator_id}' does not hold active lease for case {case_id}."
+                f"Operator '{operator_id}' holds a stale or inactive lease for case {case_id}."
             )
+        self.repo.heartbeat_lease(case_id, operator_id, lease_token)
+        self.session.commit()
 
         frame = page.frame_locator(frame_selector)
         signoff_btn = frame.locator("button.operator-signoff-btn, .operator-signoff-btn")
@@ -110,8 +113,7 @@ class HandoffCoordinator:
         )
 
         # Release operator lease and yield back to AUTOMATION
-        self.repo.release_lease(case_id)
-        self.repo.acquire_lease(case_id=case_id, owner="AUTOMATION")
+        self.repo.release_lease(case_id, operator_id, lease_token)
         self.session.commit()
 
         return {

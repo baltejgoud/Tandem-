@@ -701,29 +701,240 @@ class LedgerRepository:
     # -----------------------------------------------------------------------
     # Single-Owner Lease (AUTOMATION vs HUMAN)
     # -----------------------------------------------------------------------
-    def acquire_lease(self, case_id: str, owner: str) -> LeaseRecord:
-        stmt = select(LeaseRecord).where(LeaseRecord.case_id == case_id)
-        lease = self.session.scalar(stmt)
-        if not lease:
-            lease = LeaseRecord(case_id=case_id, owner=owner)
-            self.session.add(lease)
-        else:
-            lease.owner = owner
-            lease.acquired_at = datetime.now(timezone.utc)
-            lease.released_at = None
-        self.session.flush()
-        return lease
+    def acquire_lease(
+        self,
+        case_id: str,
+        owner: str,
+        owner_type: str | None = None,
+        now: datetime | None = None,
+        ttl: timedelta = timedelta(minutes=5),
+        resource_id: str | None = None,
+    ) -> LeaseRecord:
+        """Atomically acquire or renew a lease; never overwrite an active owner."""
+
+        from tandem.domain.errors import LeaseConflictError
+
+        acquired_at = now or datetime.now(timezone.utc)
+        expires_at = acquired_at + ttl
+        normalized_type = owner_type or (
+            "AUTOMATION" if owner.startswith("AUTOMATION") else "HUMAN"
+        )
+        if normalized_type not in {"AUTOMATION", "HUMAN"}:
+            raise ValueError("owner_type must be AUTOMATION or HUMAN")
+        if ttl <= timedelta(0):
+            raise ValueError("Lease TTL must be positive")
+
+        insert_result = self.session.execute(
+            sqlite_insert(LeaseRecord)
+            .values(
+                case_id=case_id,
+                resource_id=resource_id or case_id,
+                owner_type=normalized_type,
+                owner_id=owner,
+                fencing_token=1,
+                version=1,
+                acquired_at=acquired_at,
+                heartbeat_at=acquired_at,
+                expires_at=expires_at,
+                released_at=None,
+            )
+            .on_conflict_do_nothing(index_elements=["case_id"])
+        )
+        if getattr(insert_result, "rowcount", 0) == 1:
+            self.record_event(
+                case_id,
+                "CONTROL_LEASE_ACQUIRED",
+                "ownership",
+                actor=normalized_type,
+                payload={
+                    "owner_type": normalized_type,
+                    "owner_id": owner,
+                    "fencing_token": 1,
+                    "resource_id": resource_id or case_id,
+                    "expires_at": expires_at.isoformat(),
+                },
+            )
+            lease = self.get_lease(case_id)
+            assert lease is not None
+            return lease
+
+        lease = self.get_lease(case_id)
+        assert lease is not None
+        if self._lease_is_active(lease, acquired_at):
+            if lease.owner_id != owner or lease.owner_type != normalized_type:
+                raise LeaseConflictError(
+                    f"Resource {case_id} lease is held by {lease.owner_type} "
+                    f"owner '{lease.owner_id}' until {lease.expires_at.isoformat()}"
+                )
+            return self.heartbeat_lease(
+                case_id,
+                owner,
+                lease.fencing_token,
+                now=acquired_at,
+                ttl=ttl,
+            )
+
+        prior_version = lease.version
+        prior_token = lease.fencing_token
+        takeover = self.session.execute(
+            update(LeaseRecord)
+            .where(
+                LeaseRecord.case_id == case_id,
+                LeaseRecord.version == prior_version,
+                (LeaseRecord.released_at.is_not(None))
+                | (LeaseRecord.expires_at <= acquired_at),
+            )
+            .values(
+                resource_id=resource_id or case_id,
+                owner_type=normalized_type,
+                owner_id=owner,
+                fencing_token=prior_token + 1,
+                version=prior_version + 1,
+                acquired_at=acquired_at,
+                heartbeat_at=acquired_at,
+                expires_at=expires_at,
+                released_at=None,
+            )
+            .execution_options(synchronize_session=False)
+        )
+        if getattr(takeover, "rowcount", 0) != 1:
+            raise LeaseConflictError(f"Resource {case_id} lease changed during acquisition")
+        self.record_event(
+            case_id,
+            "CONTROL_LEASE_ACQUIRED",
+            "ownership",
+            actor=normalized_type,
+            payload={
+                "owner_type": normalized_type,
+                "owner_id": owner,
+                "fencing_token": prior_token + 1,
+                "resource_id": resource_id or case_id,
+                "expires_at": expires_at.isoformat(),
+            },
+        )
+        acquired = self.get_lease(case_id)
+        assert acquired is not None
+        return acquired
 
     def get_lease(self, case_id: str) -> Optional[LeaseRecord]:
-        stmt = select(LeaseRecord).where(LeaseRecord.case_id == case_id)
+        stmt = (
+            select(LeaseRecord)
+            .where(LeaseRecord.case_id == case_id)
+            .execution_options(populate_existing=True)
+        )
         return self.session.scalar(stmt)
 
-    def release_lease(self, case_id: str) -> Optional[LeaseRecord]:
+    def validate_lease_token(
+        self,
+        case_id: str,
+        owner_id: str,
+        fencing_token: int,
+        now: datetime | None = None,
+    ) -> bool:
+        """Return whether this actor still holds the current unexpired fence."""
+
+        checked_at = now or datetime.now(timezone.utc)
         lease = self.get_lease(case_id)
-        if lease:
-            lease.released_at = datetime.now(timezone.utc)
-            self.session.flush()
+        return bool(
+            lease
+            and lease.owner_id == owner_id
+            and lease.fencing_token == fencing_token
+            and self._lease_is_active(lease, checked_at)
+        )
+
+    def heartbeat_lease(
+        self,
+        case_id: str,
+        owner_id: str,
+        fencing_token: int,
+        now: datetime | None = None,
+        ttl: timedelta = timedelta(minutes=5),
+    ) -> LeaseRecord:
+        """Extend a live lease only when owner and fence still match."""
+
+        from tandem.domain.errors import LeaseConflictError
+
+        heartbeat_at = now or datetime.now(timezone.utc)
+        result = self.session.execute(
+            update(LeaseRecord)
+            .where(
+                LeaseRecord.case_id == case_id,
+                LeaseRecord.owner_id == owner_id,
+                LeaseRecord.fencing_token == fencing_token,
+                LeaseRecord.released_at.is_(None),
+                LeaseRecord.expires_at > heartbeat_at,
+            )
+            .values(
+                heartbeat_at=heartbeat_at,
+                expires_at=heartbeat_at + ttl,
+                version=LeaseRecord.version + 1,
+            )
+            .execution_options(synchronize_session=False)
+        )
+        if getattr(result, "rowcount", 0) != 1:
+            raise LeaseConflictError(
+                f"Lease token {fencing_token} for {case_id} is stale or expired"
+            )
+        lease = self.get_lease(case_id)
+        assert lease is not None
         return lease
+
+    def release_lease(
+        self,
+        case_id: str,
+        owner_id: str | None = None,
+        fencing_token: int | None = None,
+        now: datetime | None = None,
+    ) -> Optional[LeaseRecord]:
+        """Release a lease, optionally requiring an exact owner/fence match."""
+
+        from tandem.domain.errors import LeaseConflictError
+
+        released_at = now or datetime.now(timezone.utc)
+        lease = self.get_lease(case_id)
+        if lease is None:
+            return None
+        conditions = [LeaseRecord.case_id == case_id, LeaseRecord.released_at.is_(None)]
+        if owner_id is not None:
+            conditions.append(LeaseRecord.owner_id == owner_id)
+        if fencing_token is not None:
+            conditions.append(LeaseRecord.fencing_token == fencing_token)
+        result = self.session.execute(
+            update(LeaseRecord)
+            .where(*conditions)
+            .values(
+                released_at=released_at,
+                expires_at=released_at,
+                heartbeat_at=released_at,
+                version=LeaseRecord.version + 1,
+            )
+            .execution_options(synchronize_session=False)
+        )
+        rowcount = getattr(result, "rowcount", 0)
+        if rowcount != 1 and (owner_id is not None or fencing_token is not None):
+            raise LeaseConflictError(f"Lease for {case_id} changed before release")
+        if rowcount == 1:
+            self.record_event(
+                case_id,
+                "CONTROL_LEASE_RELEASED",
+                "ownership",
+                actor=lease.owner_type,
+                payload={
+                    "owner_type": lease.owner_type,
+                    "owner_id": lease.owner_id,
+                    "fencing_token": lease.fencing_token,
+                    "released_at": released_at.isoformat(),
+                },
+            )
+        return self.get_lease(case_id)
+
+    @staticmethod
+    def _lease_is_active(lease: LeaseRecord, now: datetime) -> bool:
+        expires_at = lease.expires_at
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        checked_at = now if now.tzinfo is not None else now.replace(tzinfo=timezone.utc)
+        return lease.released_at is None and expires_at > checked_at
 
     # -----------------------------------------------------------------------
     # Human Handoff
