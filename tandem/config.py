@@ -21,6 +21,12 @@ class Settings(BaseSettings):
     # Persistence
     tandem_db_path: str = "tandem_ledger.db"
 
+    # Security: shared bearer token required on every admin/operator mutation route
+    # (simulator reset/mode/failure switches, lease claim/release, browser-session
+    # actions). The default is a clearly-labelled local-development value; any
+    # non-development deployment MUST override it via the TANDEM_ADMIN_TOKEN env var.
+    tandem_admin_token: str = "tandem-local-dev-admin-token-change-me"
+
     # Playwright
     playwright_headless: bool = True
 

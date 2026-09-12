@@ -117,7 +117,32 @@ To prevent split-brain conditions where human operators and automated agents att
 
 ---
 
-## 7. Reporting a Vulnerability
+## 7. Network Exposure & Admin/Operator Authentication
+
+Every simulator's failure-injection and reset routes (`/api/reset`, `/api/set_mode`,
+`/api/set_compliance_interstitial`, `/api/set_session_valid`, `/api/set_failure`) and
+the Tandem operator console's mutation routes (case lease claim/release, brokered
+browser-session actions) require a shared bearer token, and the launcher binds every
+service to loopback (`127.0.0.1`) by default:
+
+- **Bind default**: `scripts/start_services.py` (and the `tandem` console script) bind
+  to `TANDEM_HOST`, which defaults to `127.0.0.1`. The containerized deployment
+  (`docker-compose.yml`) explicitly sets `TANDEM_HOST=0.0.0.0` because it must be
+  reachable through the container's published ports; running outside a container
+  keeps every admin route off the network by default.
+- **Token authentication**: every mutation route above rejects requests unless they
+  carry `Authorization: Bearer <TANDEM_ADMIN_TOKEN>`. The default value
+  (`tandem-local-dev-admin-token-change-me`) is for local development only --
+  **any shared or production-like deployment must override `TANDEM_ADMIN_TOKEN`.**
+- **CSRF defense on the operator console's HTML forms**: the lease claim/release
+  forms cannot set a custom header, so they carry the same token as a hidden
+  `admin_token` form field instead. A cross-origin page cannot read that token out of
+  the victim's same-origin dashboard page, so it cannot forge a valid submission
+  either -- this is the console's CSRF mitigation for those two routes.
+
+---
+
+## 8. Reporting a Vulnerability
 
 If you discover a potential security flaw or vulnerability in Tandem's guard verification, lease coordination, or ledger integrity:
 - Do not open a public issue on GitHub.

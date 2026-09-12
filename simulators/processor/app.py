@@ -11,21 +11,22 @@ import html
 from decimal import Decimal
 from typing import Optional
 
-from fastapi import FastAPI, Form, HTTPException, Query
+from fastapi import Depends, FastAPI, Form, HTTPException, Query
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from simulators.processor.state import processor_state
+from tandem.security.auth import require_admin_token
 
 app = FastAPI(title="Card Processor Portal Simulator (Visa DPS / PSCU)")
 
 
-@app.post("/api/reset")
+@app.post("/api/reset", dependencies=[Depends(require_admin_token)])
 async def api_reset():
     processor_state.reset()
     return {"status": "ok", "message": "Processor state reset"}
 
 
-@app.post("/api/set_mode")
+@app.post("/api/set_mode", dependencies=[Depends(require_admin_token)])
 async def api_set_mode(
     session_expired: bool = False,
     timeout_after_submit: bool = False,

@@ -15,6 +15,7 @@ dependencies = [
     "python-multipart>=0.0.9",
     "httpx>=0.27.0",
     "pyyaml>=6.0.1",
+    "tzdata>=2024.1",
 ]
 
 [project.optional-dependencies]
@@ -27,7 +28,11 @@ dev = [
     "pytest-asyncio>=0.23.0",
     "ruff>=0.3.0",
     "mypy>=1.9.0",
+    "types-PyYAML>=6.0.12",
 ]
+
+[project.scripts]
+tandem = "tandem.cli:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -35,6 +40,15 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["tandem", "simulators"]
+
+[tool.hatch.build.targets.wheel.force-include]
+# Compiled/core capability YAML artifacts must ship inside the installed wheel --
+# `tandem.replay.executor` loads them by relative path, so a `pip install`ed wheel
+# without this would be missing the artifacts it needs to run (REQUIREMENTS_MATRIX #28).
+"capabilities" = "capabilities"
+
+[tool.hatch.build.targets.sdist]
+include = ["tandem", "simulators", "capabilities", "README.md"]
 
 [tool.ruff]
 line-length = 100

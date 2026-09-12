@@ -11,6 +11,7 @@ Provides:
 import html
 import json
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Any, Dict, Literal, Optional
 
 from fastapi import Depends, FastAPI, Form, HTTPException
@@ -19,6 +20,8 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from tandem.automation.worker import CaseRunner, generate_case_id, get_case_runner
+from tandem.config import settings
 from tandem.domain.errors import LeaseConflictError
 from tandem.handoff.browser_session import browser_session_broker
 from tandem.handoff.coordinator import HandoffCoordinator
@@ -26,6 +29,7 @@ from tandem.ledger.database import get_db
 from tandem.ledger.models import ProcedureCaseRecord
 from tandem.ledger.repository import LedgerRepository
 from tandem.ledger.service import LedgerService
+from tandem.security.auth import require_admin_token
 
 app = FastAPI(title="Tandem Operator & Audit Console")
 
@@ -41,9 +45,50 @@ class BrowserActionRequest(BaseModel):
     value: Optional[str] = None
 
 
+class CreateCaseRequest(BaseModel):
+    """Request to open (or resume) a Regulation E dispute case via the automation API."""
+
+    member_id: str
+    amount: Decimal
+    case_id: Optional[str] = None
+    card_last4: str = "4112"
+
+
+@app.on_event("startup")
+def _resume_incomplete_cases_on_startup() -> None:
+    """Startup recovery scan (H-07): resubmit in-flight cases; never touch NEEDS_HUMAN
+    or UNCERTAIN_EFFECT work -- those stay queued for human review on the dashboard."""
+    resumed = get_case_runner().recover_incomplete_cases()
+    if resumed:
+        print(f"[startup] Resubmitted {len(resumed)} in-flight case(s) for resumption: {resumed}")
+
+
 @app.get("/health")
 def healthcheck():
     return {"status": "ok", "app": "tandem-operator-console", "timestamp": datetime.now(timezone.utc).isoformat()}
+
+
+@app.post("/api/cases", status_code=202, dependencies=[Depends(require_admin_token)])
+def api_create_case(
+    request: CreateCaseRequest,
+    db: Session = Depends(get_db),
+    runner: CaseRunner = Depends(get_case_runner),
+):
+    """Open a new dispute case and run it on the background automation worker pool.
+
+    Root cause (H-07): no operational automation service existed at all -- the
+    workflow could previously only be invoked from tests or `scripts/demo.py`.
+    """
+    repo = LedgerRepository(db)
+    case_id = request.case_id or generate_case_id()
+    if request.case_id is not None and repo.get_case(case_id) is not None:
+        raise HTTPException(status_code=409, detail=f"Case '{case_id}' already exists")
+
+    repo.create_or_get_case(case_id=case_id, member_id=request.member_id, amount=request.amount)
+    db.commit()
+
+    runner.submit_case(case_id, request.member_id, request.amount, request.card_last4)
+    return {"case_id": case_id, "status": "ACCEPTED"}
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -280,9 +325,11 @@ def case_detail_view(case_id: str, db: Session = Depends(get_db)):
                 <p style="font-size:12px; color:#64748b;">Enforces single-owner lease mutual exclusion between automation and human operators.</p>
                 <form method="POST" action="/cases/{html.escape(case_id)}/claim_lease" style="margin-bottom:10px;">
                     <input type="hidden" name="operator_id" value="operator_ui" />
+                    <input type="hidden" name="admin_token" value="{html.escape(settings.tandem_admin_token)}" />
                     <button type="submit" class="btn btn-claim" style="width:100%;">Claim Operator Lease</button>
                 </form>
                 <form method="POST" action="/cases/{html.escape(case_id)}/release_lease">
+                    <input type="hidden" name="admin_token" value="{html.escape(settings.tandem_admin_token)}" />
                     <button type="submit" class="btn btn-release" style="width:100%;">Release Lease to Automation</button>
                 </form>
                 <div style="margin-top:15px; padding-top:10px; border-top:1px solid #eee;">
@@ -295,7 +342,7 @@ def case_detail_view(case_id: str, db: Session = Depends(get_db)):
 </html>""")
 
 
-@app.post("/cases/{case_id}/claim_lease")
+@app.post("/cases/{case_id}/claim_lease", dependencies=[Depends(require_admin_token)])
 def handle_claim_lease(case_id: str, operator_id: str = Form("operator_ui"), db: Session = Depends(get_db)):
     coordinator = HandoffCoordinator(db)
     try:
@@ -305,7 +352,7 @@ def handle_claim_lease(case_id: str, operator_id: str = Form("operator_ui"), db:
     return RedirectResponse(url=f"/cases/{case_id}", status_code=303)
 
 
-@app.post("/cases/{case_id}/release_lease")
+@app.post("/cases/{case_id}/release_lease", dependencies=[Depends(require_admin_token)])
 def handle_release_lease(case_id: str, db: Session = Depends(get_db)):
     repo = LedgerRepository(db)
     repo.release_lease(case_id)
@@ -363,7 +410,10 @@ def api_get_browser_session(session_id: str, db: Session = Depends(get_db)):
     return _operator_snapshot(result)
 
 
-@app.post("/api/browser-sessions/{session_id}/actions")
+@app.post(
+    "/api/browser-sessions/{session_id}/actions",
+    dependencies=[Depends(require_admin_token)],
+)
 def api_execute_browser_action(
     session_id: str,
     request: BrowserActionRequest,

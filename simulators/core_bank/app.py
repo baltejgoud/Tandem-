@@ -17,10 +17,11 @@ import random
 from decimal import Decimal
 from typing import Optional
 
-from fastapi import FastAPI, Form, Query
+from fastapi import Depends, FastAPI, Form, Query
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from simulators.core_bank.state import core_bank_state
+from tandem.security.auth import require_admin_token
 
 app = FastAPI(title="Legacy Core Banking Platform (Symitar/Keystone Simulator)")
 
@@ -33,20 +34,20 @@ def dynamic_id(prefix: str) -> str:
 # ---------------------------------------------------------------------------
 # API Management Endpoints (For test fixtures, reset, and state queries)
 # ---------------------------------------------------------------------------
-@app.post("/api/reset")
+@app.post("/api/reset", dependencies=[Depends(require_admin_token)])
 async def api_reset():
     core_bank_state.seed()
     return {"status": "ok", "message": "Core bank simulator state reset to initial seed"}
 
 
-@app.post("/api/set_compliance_interstitial")
+@app.post("/api/set_compliance_interstitial", dependencies=[Depends(require_admin_token)])
 async def api_set_compliance(required: bool = True):
     core_bank_state.require_compliance_interstitial = required
     core_bank_state.compliance_cleared = False
     return {"status": "ok", "require_compliance_interstitial": required}
 
 
-@app.post("/api/set_session_valid")
+@app.post("/api/set_session_valid", dependencies=[Depends(require_admin_token)])
 async def api_set_session(valid: bool = True):
     core_bank_state.session_valid = valid
     return {"status": "ok", "session_valid": valid}
@@ -512,180 +513,4 @@ def session_expired_response() -> HTMLResponse:
 </body>
 </html>""",
         status_code=401,
-    )
-
-
-# ---------------------------------------------------------------------------
-# Second Institution ("Beta" Core Banking Console - Altered Skin & DOM)
-# ---------------------------------------------------------------------------
-@app.get("/inst_beta", response_class=HTMLResponse)
-async def inst_beta_root():
-    """Second institution outer portal with modified frameset and title."""
-    return HTMLResponse(
-        """<!DOCTYPE html>
-<html>
-<head>
-    <title>Institution Beta - Legacy Core Console (Release 9.4)</title>
-    <style>
-        body { margin:0; padding:0; font-family: 'Courier New', monospace; background: #2b3a42; }
-        .topbar { background: #1a252f; color: #fff; padding: 6px 12px; font-size: 12px; border-bottom: 2px solid #e74c3c; }
-    </style>
-</head>
-<body>
-    <div class="topbar"><strong>INSTITUTION BETA</strong> :: LEGACY HOST ENVIRONMENT (STAGING)</div>
-    <iframe id="core_workspace_frame" name="core_workspace_frame" src="/inst_beta/workspace/search" style="width:100%; height:calc(100vh - 35px); border:none;"></iframe>
-</body>
-</html>"""
-    )
-
-
-@app.get("/inst_beta/workspace/search", response_class=HTMLResponse)
-async def inst_beta_search(q: Optional[str] = Query(None)):
-    """Institution Beta search screen with altered selectors (#legacy_search_box)."""
-    if not core_bank_state.session_valid:
-        return session_expired_response()
-
-    results_html = ""
-    query = (q or "").strip()
-    if query:
-        matches = [
-            m for mid, m in core_bank_state.members.items() if query in mid or query in m.account_id
-        ]
-        if matches:
-            rows = []
-            for m in matches:
-                rows.append(
-                    f"""<tr>
-                    <td><strong class="legacy-member-id">{html.escape(m.member_id)}</strong></td>
-                    <td>{html.escape(m.account_id)}</td>
-                    <td>{html.escape(m.first_name)} {html.escape(m.last_name)}</td>
-                    <td>${m.balance:,.2f}</td>
-                    <td><a href="/inst_beta/workspace/credit/entry?member_id={html.escape(m.member_id)}" class="btn-action-legacy action-credit-btn" style="padding:2px 6px; background:#4a69bd; color:#fff; text-decoration:none;">Select &amp; Adjust</a></td>
-                </tr>"""
-                )
-            results_html = f"""<table class="legacy-result-table" border="1" cellpadding="4" style="margin-top:10px; border-collapse:collapse;">
-                <tr style="background:#eee;"><th>ID</th><th>Account</th><th>Name</th><th>Balance</th><th>Action</th></tr>
-                {''.join(rows)}
-            </table>"""
-        else:
-            results_html = "<p>No matching accounts found.</p>"
-
-    return HTMLResponse(
-        f"""<!DOCTYPE html>
-<html>
-<head>
-    <title>Beta Search</title>
-    <style>body {{ font-family: Arial, sans-serif; font-size:12px; padding:15px; }}</style>
-</head>
-<body>
-    <h3>INSTITUTION BETA :: ACCOUNT RETRIEVAL</h3>
-    <form method="GET" action="/inst_beta/workspace/search">
-        <label for="legacy_search_box">Search Member / Account:</label>
-        <input type="text" id="legacy_search_box" name="q" value="{html.escape(query)}" style="padding:4px;" />
-        <button type="submit" class="legacy-search-btn" style="padding:4px 10px;">Search</button>
-    </form>
-    {results_html}
-</body>
-</html>"""
-    )
-
-
-@app.get("/inst_beta/workspace/credit/entry", response_class=HTMLResponse)
-async def inst_beta_credit_entry(member_id: str = Query(...)):
-    member = core_bank_state.members.get(member_id)
-    if not member:
-        return HTMLResponse("<h2>Member not found</h2>", status_code=404)
-
-    return HTMLResponse(
-        f"""<!DOCTYPE html>
-<html>
-<head><title>Beta Credit Entry</title></head>
-<body style="font-family: Arial, sans-serif; padding:15px; font-size:12px;">
-    <div id="credit_action_container" class="beta-entry-box">
-        <h3>CREDIT POSTING WORKSHEET</h3>
-        <p>Member: <strong>{html.escape(member.member_id)}</strong> ({html.escape(member.first_name)} {html.escape(member.last_name)})</p>
-        <form method="POST" action="/inst_beta/workspace/credit/confirm">
-            <input type="hidden" name="member_id" value="{html.escape(member.member_id)}" />
-            <p>Case Reference: <input type="text" name="case_id" value="D-8842" /></p>
-            <p>Amount: <input type="number" step="0.01" name="amount" value="340.00" /></p>
-            <p><button type="submit" class="btn-proceed" style="padding:6px 12px; background:#27ae60; color:#fff; border:none; cursor:pointer;">Review &amp; Continue &gt;&gt;</button></p>
-        </form>
-    </div>
-</body>
-</html>"""
-    )
-
-
-@app.post("/inst_beta/workspace/credit/confirm", response_class=HTMLResponse)
-async def inst_beta_credit_confirm(
-    member_id: str = Form(...),
-    case_id: str = Form(...),
-    amount: Decimal = Form(...),
-):
-    member = core_bank_state.members.get(member_id)
-    if not member:
-        return HTMLResponse("<h2>Member not found</h2>", status_code=404)
-
-    # Scoped container with class "legacy-confirm-box" matching the overlay override!
-    return HTMLResponse(
-        f"""<!DOCTYPE html>
-<html>
-<head><title>Beta Confirm Posting</title></head>
-<body style="font-family: Arial, sans-serif; padding:15px; font-size:12px;">
-    <div class="legacy-confirm-box" id="commit_scope_container" data-member-id="{html.escape(member.member_id)}" data-amount="{amount:.2f}">
-        <h3 style="color:#c0392b;">CONFIRMATION OF PROVISIONAL CREDIT</h3>
-        <p>Target Member: <strong class="scoped-member-id">{html.escape(member.member_id)}</strong></p>
-        <p>Target Account: <strong class="scoped-account-id">{html.escape(member.account_id)}</strong></p>
-        <p>Credit Amount: <strong class="scoped-amount">${amount:,.2f} USD</strong></p>
-        <p>Case Ref: <strong class="scoped-case-id">{html.escape(case_id)}</strong></p>
-        <form method="POST" action="/inst_beta/workspace/credit/commit">
-            <input type="hidden" name="institution_id" value="beta" />
-            <input type="hidden" name="member_id" value="{html.escape(member.member_id)}" />
-            <input type="hidden" name="account_id" value="{html.escape(member.account_id)}" />
-            <input type="hidden" name="case_id" value="{html.escape(case_id)}" />
-            <input type="hidden" name="amount" value="{amount}" />
-            <input type="hidden" name="currency" value="USD" />
-            <button type="submit" class="btn-commit-legacy" style="padding:8px 16px; background:#c0392b; color:#fff; font-weight:bold; border:none; cursor:pointer;">
-                CONFIRM POSTING (LEGACY CORE)
-            </button>
-        </form>
-    </div>
-</body>
-</html>"""
-    )
-
-
-@app.post("/inst_beta/workspace/credit/commit", response_class=HTMLResponse)
-async def inst_beta_credit_commit(
-    institution_id: str = Form(...),
-    member_id: str = Form(...),
-    account_id: str = Form(...),
-    case_id: str = Form(...),
-    amount: Decimal = Form(...),
-    currency: str = Form(...),
-):
-    member = core_bank_state.members.get(member_id)
-    if institution_id != "beta":
-        return HTMLResponse("<h2>Institution binding mismatch</h2>", status_code=400)
-    if not member or account_id != member.account_id:
-        return HTMLResponse("<h2>Account binding mismatch</h2>", status_code=400)
-    if currency != "USD":
-        return HTMLResponse("<h2>Currency binding mismatch</h2>", status_code=400)
-    credit = core_bank_state.post_credit(case_id=case_id, member_id=member_id, amount=amount)
-    member = core_bank_state.members[member_id]
-
-    return HTMLResponse(
-        f"""<!DOCTYPE html>
-<html>
-<head><title>Success</title></head>
-<body style="font-family: Arial, sans-serif; padding:15px; font-size:12px;">
-    <div id="credit_success_receipt">
-        <h3>CREDIT POSTED SUCCESSFULLY</h3>
-        <p>Memo: <strong id="receipt_memo_code" class="result-memo-code">{html.escape(credit.memo_code)}</strong></p>
-        <p>Member: {html.escape(credit.member_id)}</p>
-        <p>Balance: ${member.balance:,.2f}</p>
-        <p id="receipt_money_moved" style="color:green; font-weight:bold;">MONEY_MOVED=TRUE</p>
-    </div>
-</body>
-</html>"""
     )

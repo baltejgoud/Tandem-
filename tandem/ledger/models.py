@@ -167,21 +167,6 @@ class EffectClaimRecord(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime)
 
 
-class EffectEvidenceRecord(Base):
-    """Evidence artifacts captured during capability runs (screenshots, DOM snapshots, receipts)."""
-
-    __tablename__ = "effect_evidence"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    case_id: Mapped[str] = mapped_column(String(64), index=True)
-    capability_id: Mapped[str] = mapped_column(String(128))
-    evidence_type: Mapped[str] = mapped_column(String(32))  # SCREENSHOT, DOM_DUMP, RECEIPT
-    data_or_path: Mapped[str] = mapped_column(Text)
-    captured_at: Mapped[datetime] = mapped_column(
-        DateTime, default=lambda: datetime.now(timezone.utc)
-    )
-
-
 class DeadlineRecord(Base):
     """Statutory and business-day deadlines attached to a case (e.g. 12 CFR 1005.11)."""
 

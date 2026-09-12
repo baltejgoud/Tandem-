@@ -58,6 +58,10 @@ class LedgerRepository:
         stmt = select(ProcedureCaseRecord).where(ProcedureCaseRecord.case_id == case_id)
         return self.session.scalar(stmt)
 
+    def list_cases(self) -> List[ProcedureCaseRecord]:
+        stmt = select(ProcedureCaseRecord).order_by(ProcedureCaseRecord.opened_at.desc())
+        return list(self.session.scalars(stmt).all())
+
     def create_or_get_case(
         self,
         case_id: str,
@@ -582,10 +586,14 @@ class LedgerRepository:
         return record
 
     def resolve_deadline(self, case_id: str, deadline_type: str) -> Optional[DeadlineRecord]:
+        # A deadline resolved after it lapsed (status already flipped to OVERDUE by
+        # `mark_overdue_deadlines`) must still transition to MET -- it was satisfied
+        # late, not never. Restricting this to PENDING only would strand a genuinely
+        # satisfied obligation at OVERDUE forever.
         stmt = select(DeadlineRecord).where(
             DeadlineRecord.case_id == case_id,
             DeadlineRecord.deadline_type == deadline_type,
-            DeadlineRecord.status == "PENDING",
+            DeadlineRecord.status.in_(["PENDING", "OVERDUE"]),
         )
         record = self.session.scalar(stmt)
         if record:
@@ -607,6 +615,48 @@ class LedgerRepository:
     def get_deadlines_for_case(self, case_id: str) -> List[DeadlineRecord]:
         stmt = select(DeadlineRecord).where(DeadlineRecord.case_id == case_id)
         return list(self.session.scalars(stmt).all())
+
+    def mark_overdue_deadlines(
+        self, case_id: str, now: Optional[datetime] = None
+    ) -> List[DeadlineRecord]:
+        """Transition any PENDING deadline whose due date has lapsed into OVERDUE.
+
+        The original model never evaluated a persisted deadline against the clock, so a
+        lapsed statutory deadline stayed labelled PENDING forever. This is the lifecycle
+        evaluation step: called on every case-state reconstruction so stale reads never
+        report a lapsed deadline as still on track.
+        """
+        from tandem.workflow.deadlines import evaluate_deadlines
+
+        reference = now or datetime.now(timezone.utc)
+        pending = list(
+            self.session.scalars(
+                select(DeadlineRecord).where(
+                    DeadlineRecord.case_id == case_id,
+                    DeadlineRecord.status == "PENDING",
+                )
+            ).all()
+        )
+        if not pending:
+            return []
+
+        statuses = evaluate_deadlines({d.deadline_type: d.due_at for d in pending}, now=reference)
+        overdue = [d for d in pending if statuses.get(d.deadline_type) == "OVERDUE"]
+        for record in overdue:
+            record.status = "OVERDUE"
+        if overdue:
+            self.session.flush()
+            for record in overdue:
+                self.record_event(
+                    case_id,
+                    "DEADLINE_OVERDUE",
+                    "orchestrator",
+                    payload={
+                        "deadline_type": record.deadline_type,
+                        "due_at": record.due_at.isoformat(),
+                    },
+                )
+        return overdue
 
     # -----------------------------------------------------------------------
     # Durable Regulatory Obligations

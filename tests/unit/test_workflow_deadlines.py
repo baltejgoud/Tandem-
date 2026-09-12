@@ -17,17 +17,17 @@ def test_business_days_within_same_week():
     assert friday_due.hour == 17  # 5:00 PM cutoff
 
 
-def test_business_days_skips_weekend():
-    # Friday 2026-09-04 14:00 UTC
+def test_business_days_skips_weekend_and_federal_holiday():
+    # Friday 2026-09-04 14:00 UTC (Labor Day, Monday Sep 7 2026, is a federal holiday)
     friday = datetime(2026, 9, 4, 14, 0, 0, tzinfo=timezone.utc)
-    tuesday_due = add_business_days(friday, 2)
-    # Skipping Saturday (Sep 5) and Sunday (Sep 6):
-    # Day 1: Monday (Sep 7), Day 2: Tuesday (Sep 8)
-    assert tuesday_due.year == 2026
-    assert tuesday_due.month == 9
-    assert tuesday_due.day == 8
-    assert tuesday_due.weekday() == 1  # Tuesday
-    assert tuesday_due.hour == 17
+    wednesday_due = add_business_days(friday, 2)
+    # Skipping Saturday (Sep 5), Sunday (Sep 6), and Labor Day (Mon Sep 7):
+    # Day 1: Tuesday (Sep 8), Day 2: Wednesday (Sep 9)
+    assert wednesday_due.year == 2026
+    assert wednesday_due.month == 9
+    assert wednesday_due.day == 9
+    assert wednesday_due.weekday() == 2  # Wednesday
+    assert wednesday_due.hour == 17
 
 
 def test_calculate_reg_e_statutory_deadlines():
@@ -38,10 +38,10 @@ def test_calculate_reg_e_statutory_deadlines():
     assert "INVESTIGATION_10_DAY" in deadlines
     assert "FINAL_RESOLUTION_45_DAY" in deadlines
 
-    # 10 business days from Wednesday Sep 2:
-    # Sep 3(Th), Sep 4(Fr), Sep 7(Mo), Sep 8(Tu), Sep 9(We),
-    # Sep 10(Th), Sep 11(Fr), Sep 14(Mo), Sep 15(Tu), Sep 16(We)
-    assert deadlines["INVESTIGATION_10_DAY"].day == 16
+    # 10 business days from Wednesday Sep 2, skipping the weekend AND Labor Day (Mon Sep 7):
+    # Sep 3(Th), Sep 4(Fr), Sep 8(Tu), Sep 9(We), Sep 10(Th),
+    # Sep 11(Fr), Sep 14(Mo), Sep 15(Tu), Sep 16(We), Sep 17(Th)
+    assert deadlines["INVESTIGATION_10_DAY"].day == 17
     assert deadlines["INVESTIGATION_10_DAY"].month == 9
 
 

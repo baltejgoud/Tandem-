@@ -7,7 +7,7 @@ on:
     branches: [ master, main ]
 
 jobs:
-  test:
+  verify:
     runs-on: ubuntu-latest
 
     steps:
@@ -22,14 +22,33 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v3
         with:
-          version: "latest"
+          version: "0.10.x"
           enable-cache: true
 
-      - name: Install project dependencies
-        run: uv sync
+      - name: Install project dependencies (frozen, reproducible, dev tools included)
+        run: uv sync --extra dev --frozen
+
+      - name: Lint (ruff)
+        run: uv run ruff check .
+
+      - name: Type-check (mypy)
+        run: uv run mypy tandem simulators
 
       - name: Install Playwright Chromium with system dependencies
         run: uv run playwright install chromium --with-deps
 
-      - name: Run test suite
-        run: uv run pytest -v
+      - name: Run unit/integration/e2e/regression suite
+        run: uv run pytest tests -v
+
+      - name: Run preserved independent adversarial audit suite
+        run: uv run pytest audit_tests -v
+
+      - name: Build distributable wheel and sdist
+        run: uv build
+
+      - name: Wheel install smoke test
+        run: |
+          uv venv /tmp/tandem-wheel-smoke
+          uv pip install --python /tmp/tandem-wheel-smoke/bin/python dist/*.whl
+          /tmp/tandem-wheel-smoke/bin/python -c "import tandem.cli; assert callable(tandem.cli.main)"
+          test -x /tmp/tandem-wheel-smoke/bin/tandem

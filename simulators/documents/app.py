@@ -11,21 +11,22 @@ import html
 from decimal import Decimal
 from typing import Optional
 
-from fastapi import FastAPI, Form, HTTPException, Query
+from fastapi import Depends, FastAPI, Form, HTTPException, Query
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from simulators.documents.state import document_state
+from tandem.security.auth import require_admin_token
 
 app = FastAPI(title="Document & Member Notice Delivery Simulator")
 
 
-@app.post("/api/reset")
+@app.post("/api/reset", dependencies=[Depends(require_admin_token)])
 async def api_reset():
     document_state.reset()
     return {"status": "ok", "message": "Document system state reset"}
 
 
-@app.post("/api/set_failure")
+@app.post("/api/set_failure", dependencies=[Depends(require_admin_token)])
 async def api_set_failure(fail: bool = True):
     document_state.simulate_failure = fail
     return {"status": "ok", "simulate_failure": fail}

@@ -10,16 +10,17 @@ Validates:
 - Machine-readable JSON REST API (/api/cases/{case_id})
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
+
 import pytest
 from fastapi.testclient import TestClient
 
 from tandem.api.app import app
+from tandem.config import settings
 from tandem.domain.effects import EffectClass
-from tandem.ledger.database import get_db, SessionLocal
-from tandem.ledger.models import ProcedureCaseRecord
+from tandem.ledger.database import SessionLocal
 from tandem.ledger.repository import LedgerRepository
-from tandem.workflow.deadlines import add_business_days, calculate_reg_e_deadlines
+from tandem.workflow.deadlines import add_business_days
 from tandem.workflow.state_machine import RegEState
 
 
@@ -166,7 +167,7 @@ def test_lease_claim_and_release_flow(client, test_case_in_db):
     # 1. Operator claims lease via UI POST
     resp_claim = client.post(
         f"/cases/{test_case_in_db}/claim_lease",
-        data={"operator_id": "auditor_jane"},
+        data={"operator_id": "auditor_jane", "admin_token": settings.tandem_admin_token},
         follow_redirects=False,
     )
     assert resp_claim.status_code == 303
@@ -179,7 +180,7 @@ def test_lease_claim_and_release_flow(client, test_case_in_db):
     # 2. Another operator attempts to claim while auditor_jane holds it -> 409 Conflict
     resp_conflict = client.post(
         f"/cases/{test_case_in_db}/claim_lease",
-        data={"operator_id": "auditor_bob"},
+        data={"operator_id": "auditor_bob", "admin_token": settings.tandem_admin_token},
     )
     assert resp_conflict.status_code == 409
     assert "already held by operator 'auditor_jane'" in resp_conflict.json()["detail"]
@@ -187,6 +188,7 @@ def test_lease_claim_and_release_flow(client, test_case_in_db):
     # 3. Release lease back to automation via UI POST
     resp_release = client.post(
         f"/cases/{test_case_in_db}/release_lease",
+        data={"admin_token": settings.tandem_admin_token},
         follow_redirects=False,
     )
     assert resp_release.status_code == 303

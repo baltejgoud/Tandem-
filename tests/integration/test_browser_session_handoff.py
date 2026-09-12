@@ -18,9 +18,11 @@ from tests.server_utils import ensure_simulators_running, reset_all_simulators
 def test_operator_action_preserves_worker_owned_context_and_cookie(tmp_path: Path) -> None:
     ensure_simulators_running()
     reset_all_simulators()
+    admin_headers = {"Authorization": f"Bearer {settings.tandem_admin_token}"}
     httpx.post(
         f"{settings.core_bank_url}/api/set_compliance_interstitial",
         params={"required": "true"},
+        headers=admin_headers,
         timeout=3,
     ).raise_for_status()
 
@@ -79,6 +81,7 @@ def test_operator_action_preserves_worker_owned_context_and_cookie(tmp_path: Pat
                     "frame_selector": frame,
                     "value": value,
                 },
+                headers=admin_headers,
             )
 
         assert action(automation_id, automation_token, "FILL", "input[name='q']", value="8830142").status_code == 200
@@ -148,6 +151,7 @@ def test_operator_action_preserves_worker_owned_context_and_cookie(tmp_path: Pat
         httpx.post(
             f"{settings.core_bank_url}/api/set_compliance_interstitial",
             params={"required": "false"},
+            headers=admin_headers,
             timeout=3,
         )
         engine.dispose()

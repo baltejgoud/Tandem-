@@ -183,9 +183,9 @@ uv run python scripts/demo.py --scenario second-institution
 ```
 
 **What Happens Under the Hood**:
-1. Step 1 (Drift Failure): Run standard capability against Institution Beta (`/inst_beta`), which uses `<div role="form">` and different CSS classes instead of legacy tables.
+1. Step 1 (Drift Failure): Run the unmodified capability artifact against Institution Beta's independent service (port 8002), trusted-routed at runtime from `institution_id` (never a mutated artifact URL). Beta uses `<div role="form">` and different CSS classes instead of legacy tables.
 2. Selector fails with `SurfaceDriftError` (`OutcomeCode.ELEMENT_NOT_FOUND`).
-3. Step 2 (Overlay Success): Provide the `core_bank_beta` surface overlay that maps semantic targets to Beta's DOM elements.
+3. Step 2 (Overlay Success): Provide the Beta surface overlay that maps semantic targets to Beta's DOM elements.
 4. Replay executes successfully with **0 LLM calls**.
 
 ---

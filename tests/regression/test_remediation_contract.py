@@ -28,6 +28,7 @@ from tandem.replay.engine import EffectEngine
 from tandem.replay.executor import DeterministicExecutor
 from tandem.replay.postcheck import execute_postcheck
 from tandem.replay.precheck import execute_precheck
+from tandem.replay.reconciliation import reconcile_commit_execution
 
 ARTIFACT = Path("capabilities/compiled/demo_post_provisional_credit.yaml")
 
@@ -254,6 +255,94 @@ def test_postcheck_states_are_explicit(
         assert outcome.category == OutcomeCategory.BUSINESS_OUTCOME
     else:
         assert outcome.category == OutcomeCategory.UNCERTAIN_EFFECT
+
+
+def test_reconciliation_retries_transient_inquiry_outage_before_declaring_uncertain(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """M-03: `reconciliation.max_inquiry_attempts` was declared but never read.
+
+    A transient postcheck-*inquiry* outage (not the mutating COMMIT itself) must now be
+    retried, bounded by `max_inquiry_attempts`, before an effect is escalated as
+    UNCERTAIN_EFFECT -- without ever retrying the mutation.
+    """
+    capability = load_capability_from_yaml(str(ARTIFACT))
+    assert capability.effect.reconciliation is not None
+    assert capability.effect.reconciliation.max_inquiry_attempts >= 2
+
+    inputs = {
+        "institution_id": "alpha",
+        "member_id": "8830142",
+        "account_id": "CHK-8830142-01",
+        "case_id": "D-RECONCILE-RETRY",
+        "amount": "340.00",
+        "currency": "USD",
+    }
+
+    # Actually post the credit first so a later, successful postcheck inquiry has a
+    # real effect to find.
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        outcome = DeterministicExecutor(browser.new_page()).execute(capability, inputs)
+        browser.close()
+    assert outcome.code == OutcomeCode.COMPLETED
+
+    real_get = httpx.get
+    calls = {"count": 0}
+
+    def flaky_then_real(*args, **kwargs):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise httpx.ConnectTimeout("transient inquiry outage")
+        return real_get(*args, **kwargs)
+
+    monkeypatch.setattr("tandem.replay.postcheck.httpx.get", flaky_then_real)
+
+    reconciled = reconcile_commit_execution(
+        capability=capability, inputs=inputs, error_message="connection reset mid-submit"
+    )
+    assert calls["count"] == 2, "expected exactly one retry of the read-only inquiry"
+    assert reconciled.category == OutcomeCategory.SUCCESS
+    assert reconciled.code == OutcomeCode.CONFIRMED_APPLIED
+    assert reconciled.details["inquiry_attempts"] == 2
+
+
+def test_reconciliation_never_retries_an_ambiguous_inquiry_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A malformed/ambiguous inquiry response is not retried: re-querying immediately
+    would not fix bad data, so it is classified as uncertain on the first attempt."""
+    capability = load_capability_from_yaml(str(ARTIFACT))
+
+    class Response:
+        status_code = 200
+
+        def json(self):
+            return {"case_id": "D-RECONCILE-AMBIGUOUS", "status": "POSTED"}
+
+    calls = {"count": 0}
+
+    def always_ambiguous(*_args, **_kwargs):
+        calls["count"] += 1
+        return Response()
+
+    monkeypatch.setattr("tandem.replay.postcheck.httpx.get", always_ambiguous)
+
+    reconciled = reconcile_commit_execution(
+        capability=capability,
+        inputs={
+            "institution_id": "alpha",
+            "member_id": "8830142",
+            "account_id": "CHK-8830142-01",
+            "case_id": "D-RECONCILE-AMBIGUOUS",
+            "amount": "340.00",
+            "currency": "USD",
+        },
+        error_message="connection reset mid-submit",
+    )
+    assert calls["count"] == 1
+    assert reconciled.category == OutcomeCategory.UNCERTAIN_EFFECT
+    assert reconciled.details["inquiry_attempts"] == 1
 
 
 @pytest.mark.parametrize(

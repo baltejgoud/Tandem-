@@ -90,7 +90,9 @@ def _crashing_workflow(db_path: str, case_id: str, point: str, capability: str |
             case_id,
             "8830142",
             "340.00",
-            injected_clock=datetime(2026, 9, 2, 9, 0, tzinfo=timezone.utc),
+            # Real clock, not a fixed historical date: keeps NOTICE_2_DAY safely in
+            # the future regardless of when the suite actually runs.
+            injected_clock=datetime.now(timezone.utc),
         )
         browser.close()
 
@@ -108,7 +110,9 @@ def _recover_workflow(db_path: str, case_id: str, queue) -> None:
                 case_id,
                 "8830142",
                 "340.00",
-                injected_clock=datetime(2026, 9, 2, 9, 0, tzinfo=timezone.utc),
+                # Real clock, not a fixed historical date: keeps NOTICE_2_DAY safely in
+            # the future regardless of when the suite actually runs.
+            injected_clock=datetime.now(timezone.utc),
             )
             browser.close()
             queue.put(result)

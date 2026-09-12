@@ -113,3 +113,39 @@ def test_ledger_persistence_and_state_reconstruction_after_process_restart(temp_
         assert snapshot.lease_owner == "AUTOMATION"
 
     engine_2.dispose()
+
+
+def test_lapsed_deadline_is_reported_overdue_on_reconstruction(temp_db_path: str):
+    """A PENDING deadline whose due date has already passed must surface as OVERDUE.
+
+    Root cause (M-02): the deadline model never evaluated a persisted due date against
+    the clock, so a lapsed statutory deadline stayed labelled PENDING indefinitely.
+    """
+    engine = get_engine(temp_db_path)
+    init_db(engine)
+    session_factory = get_session_factory(engine)
+
+    with session_factory() as session:
+        repo = LedgerRepository(session)
+        repo.create_or_get_case(case_id="D-9910", member_id="8830142", amount=100.00)
+
+        lapsed_due_at = datetime.now(timezone.utc) - timedelta(days=1)
+        repo.create_deadline("D-9910", deadline_type="NOTICE_2_DAY", due_at=lapsed_due_at)
+
+        future_due_at = datetime.now(timezone.utc) + timedelta(days=5)
+        repo.create_deadline("D-9910", deadline_type="FINAL_RESOLUTION_45_DAY", due_at=future_due_at)
+        session.commit()
+
+        service = LedgerService(session)
+        snapshot = service.reconstruct_case_state("D-9910")
+
+        by_type = {d.deadline_type: d.status for d in snapshot.pending_deadlines}
+        assert by_type["NOTICE_2_DAY"] == "OVERDUE"
+        assert by_type["FINAL_RESOLUTION_45_DAY"] == "PENDING"
+
+        # The transition is persisted, not just computed transiently for the read.
+        persisted = repo.get_deadlines_for_case("D-9910")
+        persisted_by_type = {d.deadline_type: d.status for d in persisted}
+        assert persisted_by_type["NOTICE_2_DAY"] == "OVERDUE"
+
+    engine.dispose()
