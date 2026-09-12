@@ -47,3 +47,7 @@ class ComplianceInterstitialError(TandemError):
 
 class LeaseConflictError(TandemError):
     """Raised when a lease is already held by another actor (AUTOMATION vs HUMAN)."""
+
+
+class LedgerIntegrityError(TandemError):
+    """Raised when immutable procedure history is incomplete or has been altered."""

@@ -115,6 +115,16 @@ class LedgerRepository:
             case.money_moved = case.money_moved or money_moved
         case.updated_at = datetime.now(timezone.utc)
         self.session.flush()
+        self.record_event(
+            case_id,
+            "CASE_STATUS_UPDATED",
+            "orchestrator",
+            payload={
+                "status": case.status,
+                "money_moved": case.money_moved,
+                "updated_at": case.updated_at.isoformat(),
+            },
+        )
         return case
 
     # -----------------------------------------------------------------------
@@ -249,6 +259,27 @@ class LedgerRepository:
         )
         self.session.add(record)
         self.session.flush()
+        self.record_event(
+            case_id,
+            "CAPABILITY_EXECUTION_STARTED",
+            capability_id,
+            actor=actor,
+            payload={
+                "execution_id": record.id,
+                "capability_id": capability_id,
+                "capability_version": capability_version,
+                "effect_class": effect_class,
+                "idempotency_key": idempotency_key,
+                "status": "RUNNING",
+                "expected_entity": expected_entity,
+                "expected_amount": (
+                    str(record.expected_amount) if record.expected_amount is not None else None
+                ),
+                "actor": actor,
+                "browser_session_id": browser_session_id,
+                "started_at": record.started_at.isoformat(),
+            },
+        )
         return record
 
     def complete_execution(
@@ -276,6 +307,24 @@ class LedgerRepository:
         record.money_moved = money_moved
         record.completed_at = datetime.now(timezone.utc)
         self.session.flush()
+        self.record_event(
+            record.case_id,
+            "CAPABILITY_EXECUTION_COMPLETED",
+            record.capability_id,
+            actor=record.actor,
+            payload={
+                "execution_id": record.id,
+                "status": record.status,
+                "observed_entity": record.observed_entity,
+                "observed_amount": (
+                    str(record.observed_amount) if record.observed_amount is not None else None
+                ),
+                "failure_category": record.failure_category,
+                "audit_ref": record.audit_ref,
+                "money_moved": record.money_moved,
+                "completed_at": record.completed_at.isoformat(),
+            },
+        )
         return record
 
     def get_executions_for_case(self, case_id: str) -> List[CapabilityExecutionRecord]:
@@ -302,6 +351,17 @@ class LedgerRepository:
             )
             self.session.add(intent)
             self.session.flush()
+            self.record_event(
+                case_id,
+                "INTENT_STAGED",
+                capability_id,
+                payload={
+                    "idempotency_key": idempotency_key,
+                    "capability_id": capability_id,
+                    "intent_status": intent.intent_status,
+                    "created_at": intent.created_at.isoformat(),
+                },
+            )
         return intent
 
     def find_intent(self, idempotency_key: str) -> Optional[EffectIntentRecord]:
@@ -312,9 +372,15 @@ class LedgerRepository:
 
     def mark_intent_committed(self, idempotency_key: str) -> None:
         intent = self.find_intent(idempotency_key)
-        if intent:
+        if intent and intent.intent_status != "COMMITTED":
             intent.intent_status = "COMMITTED"
             self.session.flush()
+            self.record_event(
+                intent.case_id,
+                "INTENT_COMMITTED",
+                intent.capability_id,
+                payload={"idempotency_key": idempotency_key},
+            )
 
     # -----------------------------------------------------------------------
     # Atomic Effect Claim
@@ -381,6 +447,20 @@ class LedgerRepository:
                     "idempotency_key": identity.idempotency_key,
                     "owner_id": owner_id,
                     "fencing_token": record.fencing_token,
+                    "institution_id": record.institution_id,
+                    "procedure_id": record.procedure_id,
+                    "case_id": record.case_id,
+                    "capability_id": record.capability_id,
+                    "member_id": record.member_id,
+                    "account_id": record.account_id,
+                    "amount": str(record.amount),
+                    "currency": record.currency,
+                    "business_reference": record.business_reference,
+                    "status": record.status,
+                    "claimed_at": record.claimed_at.isoformat(),
+                    "heartbeat_at": record.heartbeat_at.isoformat(),
+                    "expires_at": record.expires_at.isoformat(),
+                    "updated_at": record.updated_at.isoformat(),
                 },
             )
         return EffectClaim(
@@ -433,7 +513,25 @@ class LedgerRepository:
         )
         result = self.session.execute(stmt)
         self.session.flush()
-        return bool(getattr(result, "rowcount", 0) == 1)
+        transitioned = bool(getattr(result, "rowcount", 0) == 1)
+        if transitioned:
+            record = self.get_effect_claim(idempotency_key)
+            if record is None:
+                raise RuntimeError("Transitioned effect claim could not be read")
+            self.record_event(
+                record.case_id,
+                "EFFECT_CLAIM_TRANSITIONED",
+                record.capability_id,
+                payload={
+                    "idempotency_key": idempotency_key,
+                    "status": record.status,
+                    "owner_id": record.owner_id,
+                    "fencing_token": record.fencing_token,
+                    "heartbeat_at": record.heartbeat_at.isoformat(),
+                    "updated_at": record.updated_at.isoformat(),
+                },
+            )
+        return transitioned
 
     def validate_effect_token(
         self,
@@ -470,6 +568,16 @@ class LedgerRepository:
         )
         self.session.add(record)
         self.session.flush()
+        self.record_event(
+            case_id,
+            "DEADLINE_CREATED",
+            "orchestrator",
+            payload={
+                "deadline_type": deadline_type,
+                "due_at": due_at.isoformat(),
+                "status": record.status,
+            },
+        )
         return record
 
     def resolve_deadline(self, case_id: str, deadline_type: str) -> Optional[DeadlineRecord]:
@@ -483,6 +591,16 @@ class LedgerRepository:
             record.status = "MET"
             record.resolved_at = datetime.now(timezone.utc)
             self.session.flush()
+            self.record_event(
+                case_id,
+                "DEADLINE_RESOLVED",
+                "orchestrator",
+                payload={
+                    "deadline_type": deadline_type,
+                    "status": record.status,
+                    "resolved_at": record.resolved_at.isoformat(),
+                },
+            )
         return record
 
     def get_deadlines_for_case(self, case_id: str) -> List[DeadlineRecord]:
@@ -515,7 +633,12 @@ class LedgerRepository:
             case_id,
             "OBLIGATION_CREATED",
             "orchestrator",
-            payload={"obligation_type": obligation_type, "due_at": due_at.isoformat()},
+            payload={
+                "obligation_type": obligation_type,
+                "due_at": due_at.isoformat(),
+                "status": obligation.status,
+                "created_at": obligation.created_at.isoformat(),
+            },
         )
         return obligation
 
@@ -536,7 +659,11 @@ class LedgerRepository:
                 case_id,
                 "OBLIGATION_ACTIVATED",
                 "orchestrator",
-                payload={"obligation_type": obligation_type},
+                payload={
+                    "obligation_type": obligation_type,
+                    "status": obligation.status,
+                    "activated_at": obligation.activated_at.isoformat(),
+                },
             )
         self.session.flush()
         return obligation
@@ -551,7 +678,11 @@ class LedgerRepository:
             case_id,
             "OBLIGATION_SATISFIED",
             "orchestrator",
-            payload={"obligation_type": obligation_type},
+            payload={
+                "obligation_type": obligation_type,
+                "status": obligation.status,
+                "satisfied_at": obligation.satisfied_at.isoformat(),
+            },
         )
         self.session.flush()
         return obligation
