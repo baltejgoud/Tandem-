@@ -8,6 +8,7 @@ import httpx
 import uvicorn
 
 from simulators.core_bank.app import app as core_bank_app
+from simulators.core_bank.beta_app import app as core_bank_beta_app
 from simulators.documents.app import app as docs_app
 from simulators.processor.app import app as proc_app
 
@@ -40,22 +41,30 @@ def start_server_in_thread(app, port: int) -> None:
 def ensure_simulators_running() -> None:
     """Ensure core bank (8001), processor (8003), and documents (8004) are running."""
     start_server_in_thread(core_bank_app, 8001)
+    start_server_in_thread(core_bank_beta_app, 8002)
     start_server_in_thread(proc_app, 8003)
     start_server_in_thread(docs_app, 8004)
 
 
 def reset_all_simulators() -> None:
     """Reset state across all three simulators via their API endpoints and python state."""
+    from simulators.core_bank.beta_state import core_bank_beta_state
     from simulators.core_bank.state import core_bank_state
     from simulators.documents.state import document_state
     from simulators.processor.state import processor_state
     from tandem.config import settings
 
     core_bank_state.seed()
+    core_bank_beta_state.seed()
     processor_state.reset()
     document_state.reset()
 
-    for url in [settings.core_bank_url, settings.processor_url, settings.documents_url]:
+    for url in [
+        settings.core_bank_url,
+        settings.core_bank_2_url,
+        settings.processor_url,
+        settings.documents_url,
+    ]:
         try:
             httpx.post(f"{url}/api/reset", timeout=1.0)
         except Exception:

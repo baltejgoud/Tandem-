@@ -92,9 +92,12 @@ class EffectEngine:
             try:
                 import httpx
 
-                from tandem.config import settings
+                from tandem.surfaces.routing import core_bank_url_for
 
-                response = httpx.get(f"{settings.core_bank_url}/api/member/{member_id}", timeout=3.0)
+                response = httpx.get(
+                    f"{core_bank_url_for(inputs.get('institution_id'))}/api/member/{member_id}",
+                    timeout=3.0,
+                )
                 response.raise_for_status()
                 member_data = response.json()
                 if str(member_data.get("member_id", "")) != member_id:

@@ -7,17 +7,19 @@ from tandem.surfaces.base import SurfaceOverlay
 # Built-in institution overlays
 OVERLAYS: Dict[str, SurfaceOverlay] = {
     "core_bank_alpha": SurfaceOverlay(
-        institution_id="core_bank_alpha",
+        institution_id="alpha",
         name="Symitar/Keystone Platform (Primary)",
         selector_overrides={},
         container_overrides={},
     ),
     "core_bank_beta": SurfaceOverlay(
-        institution_id="core_bank_beta",
+        institution_id="beta",
         name="Symitar Legacy Platform (Older Skin / Second Institution)",
         selector_overrides={
             "Member Search Input": ["#legacy_search_box", "input[name='q']"],
+            "Search Button": [".legacy-search-action"],
             "Post Provisional Credit Link": [".btn-action-legacy", "a.action-credit-btn", "text=Select & Adjust"],
+            "Proceed to Confirmation": [".legacy-review-action"],
             "Final external credit actuation": [
                 ".btn-commit-legacy",
                 ".btn-commit-final",
@@ -30,6 +32,9 @@ OVERLAYS: Dict[str, SurfaceOverlay] = {
         },
     ),
 }
+
+OVERLAYS["alpha"] = OVERLAYS["core_bank_alpha"]
+OVERLAYS["beta"] = OVERLAYS["core_bank_beta"]
 
 
 def get_overlay(institution_id: str) -> Optional[SurfaceOverlay]:

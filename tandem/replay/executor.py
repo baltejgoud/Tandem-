@@ -21,6 +21,7 @@ from tandem.replay.crash_injection import maybe_crash
 from tandem.replay.guards import verify_control_scoped_guard
 from tandem.surfaces.base import SurfaceOverlay
 from tandem.surfaces.playwright_surface import PlaywrightSurface
+from tandem.surfaces.routing import core_bank_url_for
 
 
 def render_template(template_str: str, context: Dict[str, Any]) -> str:
@@ -103,7 +104,7 @@ class DeterministicExecutor:
                         if url != f"surface://{capability.system}/home":
                             raise ValueError(f"Unsupported logical surface route: {url}")
                         routes = {
-                            "core_bank": settings.core_bank_url,
+                            "core_bank": core_bank_url_for(inputs.get("institution_id")),
                             "processor": settings.processor_url,
                             "documents": settings.documents_url,
                         }
@@ -112,12 +113,6 @@ class DeterministicExecutor:
                                 f"No runtime route configured for surface '{capability.system}'"
                             )
                         url = routes[capability.system]
-                        if (
-                            capability.system == "core_bank"
-                            and self.overlay
-                            and self.overlay.institution_id == "beta"
-                        ):
-                            url = f"{url}/inst_beta"
                     self.surface.navigate(url)
 
                 elif step.action == StepAction.FILL:
