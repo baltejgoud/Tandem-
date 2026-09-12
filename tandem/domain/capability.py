@@ -1,6 +1,7 @@
 """Capability artifact schema and typed execution definitions."""
 
 import hashlib
+import hmac
 import json
 from datetime import datetime, timezone
 from enum import Enum
@@ -160,29 +161,59 @@ class CapabilityDefinition(BaseModel):
         return self
 
     def compute_hash(self) -> str:
-        """Compute deterministic SHA-256 digest of capability configuration."""
-        data = {
-            "id": self.id,
-            "version": self.version,
-            "system": self.system,
-            "effect": self.effect.model_dump(by_alias=True, mode="json"),
-            "input_schema": self.input_schema,
-            "output_schema": self.output_schema,
-            "steps": [s.model_dump(mode="json") for s in self.steps],
-            "scoped_guard": (
-                self.scoped_guard.model_dump(mode="json") if self.scoped_guard else None
-            ),
-        }
-        raw = json.dumps(data, sort_keys=True)
-        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+        """Compute SHA-256 over every normalized field except the digest itself."""
+
+        data = self.model_dump(by_alias=True, mode="json", exclude={"artifact_hash"})
+        return compute_artifact_digest(data)
+
+
+def canonical_artifact_bytes(data: Dict[str, Any]) -> bytes:
+    """Serialize an artifact payload canonically for integrity verification."""
+
+    normalized = dict(data)
+    normalized.pop("artifact_hash", None)
+    return json.dumps(
+        normalized,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    ).encode("utf-8")
+
+
+def compute_artifact_digest(data: Dict[str, Any]) -> str:
+    """Return the canonical artifact SHA-256 digest."""
+
+    return hashlib.sha256(canonical_artifact_bytes(data)).hexdigest()
 
 
 def load_capability_from_yaml(path: str) -> CapabilityDefinition:
-    """Load and validate a capability definition from a YAML file."""
+    """Load a capability only after schema, target, and digest verification."""
     import yaml
 
     with open(path, "r", encoding="utf-8") as f:
         data = yaml.safe_load(f)
+    if not isinstance(data, dict):
+        raise ValueError("Capability artifact must be a YAML mapping")
+    declared_hash = data.get("artifact_hash")
+    if not isinstance(declared_hash, str) or len(declared_hash) != 64:
+        raise ValueError("Capability artifact integrity digest is missing or invalid")
     cap = CapabilityDefinition.model_validate(data)
-    cap.artifact_hash = cap.compute_hash()
+    computed_hash = cap.compute_hash()
+    if not hmac.compare_digest(declared_hash, computed_hash):
+        raise ValueError(
+            "Capability artifact integrity verification failed: digest mismatch"
+        )
+    if not cap.supported_surfaces or cap.system not in cap.supported_surfaces:
+        raise ValueError(
+            f"Capability surface '{cap.system}' is not present in supported_surfaces"
+        )
+    for step in cap.steps:
+        if step.action == StepAction.NAVIGATE:
+            expected = f"surface://{cap.system}/home"
+            if step.semantic_target != expected:
+                raise ValueError(
+                    f"Navigation target is not an allowlisted logical surface: "
+                    f"expected '{expected}'"
+                )
     return cap

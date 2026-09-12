@@ -1,8 +1,11 @@
 id: "core.post_provisional_credit"
 version: "1.0.0"
+schema_version: 1
+created_at: "2026-09-12T00:00:00+00:00"
 name: "Post Provisional Credit"
 description: "Navigates hostile core banking platform, verifies member and amount within container, and posts provisional credit"
 system: "core_bank"
+supported_surfaces: ["core_bank"]
 
 effect:
   class: "COMMIT"
@@ -53,6 +56,13 @@ input_schema:
       type: "string"
   required: ["institution_id", "member_id", "account_id", "case_id", "amount", "currency"]
 
+output_schema:
+  type: "object"
+  properties:
+    receipt_reference: {type: "string"}
+    money_moved: {type: "boolean"}
+  required: ["receipt_reference", "money_moved"]
+
 scoped_guard:
   guard_id: "primary_commit_guard"
   container_selector: "#credit_action_container, .confirm-panel"
@@ -66,7 +76,7 @@ scoped_guard:
 steps:
   - step_id: "step_nav_portal"
     action: "NAVIGATE"
-    semantic_target: "http://127.0.0.1:8001/"
+    semantic_target: "surface://core_bank/home"
     locator_candidates: []
 
   - step_id: "step_fill_search"
@@ -127,3 +137,6 @@ steps:
       - "text=POST PROVISIONAL CREDIT NOW"
     frame_selector: "#core_workspace_frame"
     guard_ref: "primary_commit_guard"
+
+source_discovery_run_id: null
+artifact_hash: "851cab20d5f075435095afd21a181308711b13d288b41c43a9f4d85a00e6b1c6"

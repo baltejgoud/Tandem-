@@ -1,8 +1,11 @@
 id: "docs.send_notice"
 version: "1.0.0"
+schema_version: 1
+created_at: "2026-09-12T00:00:00+00:00"
 name: "Send Regulation E Notice"
 description: "Dispatch the member notice through the deterministic document adapter"
 system: "documents"
+supported_surfaces: ["documents"]
 effect:
   class: "COMMIT"
   idempotency_key: "regE:{{input.case_id}}:notice"
@@ -42,6 +45,11 @@ input_schema:
     notice_type: {type: "string"}
     deadline_due_at: {type: "string"}
   required: [institution_id, member_id, account_id, case_id, amount, currency, notice_type, deadline_due_at]
+output_schema:
+  type: "object"
+  properties:
+    document_reference: {type: "string"}
+  required: [document_reference]
 scoped_guard:
   guard_id: "documents_request_identity"
   container_selector: "request-payload"
@@ -51,3 +59,5 @@ steps:
     semantic_target: "documents-notice-route"
     locator_candidates: []
     guard_ref: "documents_request_identity"
+source_discovery_run_id: null
+artifact_hash: "a41cc7ab59d7f5dda1eaada52701e6112ff835252c80a4ff910600ec8cee2910"
